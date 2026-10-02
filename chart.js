@@ -2,8 +2,8 @@
 (function (root) {
   'use strict';
   const FARBE = {
-    rot: '#FF6B7A', mint: '#5BD6B0', amber: '#FFB547', lila: '#B79CFF',
-    text: 'rgba(233,237,248,0.55)', raster: 'rgba(255,255,255,0.06)', rasterStark: 'rgba(255,255,255,0.14)'
+    rot: '#F0506A', ok: '#F0EEE6', hoch: '#D97757', lila: '#B5A6E8', hell: '#FAF9F5', grund: '#262624',
+    text: 'rgba(250,249,245,0.55)', raster: 'rgba(255,255,255,0.06)', rasterStark: 'rgba(255,255,255,0.14)'
   };
   const hhmm = m => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(Math.round(m % 60)).padStart(2, '0');
 
@@ -108,11 +108,11 @@
       c.clearRect(0, 0, W, H);
 
       // Zonen
-      c.fillStyle = 'rgba(91,214,176,0.09)';
+      c.fillStyle = 'rgba(240,238,230,0.06)';
       c.fillRect(0, S.y(hi), W, S.y(lo) - S.y(hi));
-      c.fillStyle = 'rgba(255,107,122,0.10)';
+      c.fillStyle = 'rgba(240,80,106,0.10)';
       c.fillRect(0, S.y(lo), W, S.y(40) - S.y(lo));
-      if (S.yMax > 250) { c.fillStyle = 'rgba(255,181,71,0.05)'; c.fillRect(0, S.y(S.yMax), W, S.y(250) - S.y(S.yMax)); }
+      if (S.yMax > 250) { c.fillStyle = 'rgba(217,119,87,0.07)'; c.fillRect(0, S.y(S.yMax), W, S.y(250) - S.y(S.yMax)); }
 
       // Stundenraster
       const schritt = this.pxProStunde >= 36 ? 1 : 3;
@@ -129,7 +129,7 @@
       }
       // Grenzlinien
       c.setLineDash([3, 5]); c.lineWidth = 1;
-      for (const [g, f] of [[lo, 'rgba(255,107,122,0.45)'], [hi, 'rgba(91,214,176,0.45)']]) {
+      for (const [g, f] of [[lo, 'rgba(240,80,106,0.45)'], [hi, 'rgba(217,119,87,0.5)']]) {
         c.strokeStyle = f; c.beginPath(); c.moveTo(0, S.y(g) + 0.5); c.lineTo(W, S.y(g) + 0.5); c.stroke();
       }
       c.setLineDash([]);
@@ -150,7 +150,7 @@
         c.moveTo(0, S.yi(0));
         for (let t = 0; t <= 1440; t += 2) c.lineTo(t * px, S.yi(s.I[t]));
         c.lineTo(1440 * px, S.yi(0)); c.closePath();
-        c.fillStyle = s.fuellung || 'rgba(183,156,255,0.16)'; c.fill();
+        c.fillStyle = s.fuellung || 'rgba(181,166,232,0.16)'; c.fill();
         c.beginPath();
         for (let t = 0; t <= 1440; t += 2) { const y = S.yi(s.I[t]); t ? c.lineTo(t * px, y) : c.moveTo(0, y); }
         c.strokeStyle = s.farbe || FARBE.lila; c.lineWidth = 1.5; c.stroke();
@@ -161,10 +161,10 @@
         const gr = c.createLinearGradient(0, S.y(S.yMax), 0, S.y(40));
         const p = g => Math.max(0, Math.min(1, (S.y(g) - S.y(S.yMax)) / (S.y(40) - S.y(S.yMax))));
         gr.addColorStop(0, FARBE.rot);
-        gr.addColorStop(p(Math.max(hi + 60, 250)), FARBE.amber);
-        gr.addColorStop(p(hi + 8), FARBE.amber);
-        gr.addColorStop(p(hi - 8), FARBE.mint);
-        gr.addColorStop(p(lo + 6), FARBE.mint);
+        gr.addColorStop(p(Math.max(hi + 60, 250)), FARBE.hoch);
+        gr.addColorStop(p(hi + 8), FARBE.hoch);
+        gr.addColorStop(p(hi - 8), FARBE.ok);
+        gr.addColorStop(p(lo + 6), FARBE.ok);
         gr.addColorStop(p(lo - 6), FARBE.rot);
         gr.addColorStop(1, FARBE.rot);
         return gr;
@@ -173,7 +173,7 @@
       for (const s of this.daten.serien) {
         c.lineJoin = 'round'; c.lineCap = 'round';
         if (s.gestrichelt) {
-          pfad(s.G); c.setLineDash([7, 6]); c.lineWidth = 2.5; c.strokeStyle = s.farbe || '#E9EDF8'; c.stroke(); c.setLineDash([]);
+          pfad(s.G); c.setLineDash([7, 6]); c.lineWidth = 2.5; c.strokeStyle = s.farbe || FARBE.hell; c.stroke(); c.setLineDash([]);
           continue;
         }
         const strich = s.farbe || verlauf();
@@ -186,18 +186,19 @@
       if (haupt && this.daten.spitzeZeigen !== false) {
         let mt = 0; for (let t = 0; t <= 1440; t++) if (haupt.G[t] > haupt.G[mt]) mt = t;
         const x = mt * px, y = S.y(haupt.G[mt]);
-        c.fillStyle = '#E9EDF8'; c.beginPath(); c.arc(x, y, 3.5, 0, 7); c.fill();
+        c.fillStyle = FARBE.grund; c.beginPath(); c.arc(x, y, 5.5, 0, 7); c.fill();
+        c.fillStyle = FARBE.hell; c.beginPath(); c.arc(x, y, 3.5, 0, 7); c.fill();
       }
 
       // Fadenkreuz
       if (this.kreuz != null && haupt) {
         const t = this.kreuz, x = t * px + 0.5;
-        c.strokeStyle = 'rgba(233,237,248,0.6)'; c.lineWidth = 1;
+        c.strokeStyle = 'rgba(250,249,245,0.6)'; c.lineWidth = 1;
         c.beginPath(); c.moveTo(x, S.oben); c.lineTo(x, H - S.unten); c.stroke();
         for (const s of this.daten.serien) {
           const y = S.y(s.G[t]);
-          c.fillStyle = '#151B30'; c.beginPath(); c.arc(x, y, 6, 0, 7); c.fill();
-          c.fillStyle = s.farbe || '#E9EDF8'; c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill();
+          c.fillStyle = FARBE.grund; c.beginPath(); c.arc(x, y, 6, 0, 7); c.fill();
+          c.fillStyle = s.farbe || FARBE.hell; c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill();
         }
       }
       this.zeichneAchsen(S);
@@ -208,23 +209,23 @@
       const L = this.achseL.getContext('2d');
       L.setTransform(dpr, 0, 0, dpr, 0, 0); L.clearRect(0, 0, 40, S.h);
       const g1 = L.createLinearGradient(0, 0, 40, 0);
-      g1.addColorStop(0, 'rgba(21,27,48,0.95)'); g1.addColorStop(0.7, 'rgba(21,27,48,0.75)'); g1.addColorStop(1, 'rgba(21,27,48,0)');
+      g1.addColorStop(0, 'rgba(38,38,36,0.95)'); g1.addColorStop(0.7, 'rgba(38,38,36,0.75)'); g1.addColorStop(1, 'rgba(38,38,36,0)');
       L.fillStyle = g1; L.fillRect(0, 0, 40, S.h);
       L.font = '500 11px Rubik, system-ui, sans-serif'; L.textAlign = 'left'; L.textBaseline = 'middle';
       const werte = new Set([lo, hi]);
       for (let g = 100; g < S.yMax; g += S.yMax > 300 ? 100 : 50) if (Math.abs(g - lo) > 18 && Math.abs(g - hi) > 18) werte.add(g);
       for (const g of werte) {
-        L.fillStyle = g === lo ? 'rgba(255,107,122,0.9)' : g === hi ? 'rgba(91,214,176,0.9)' : FARBE.text;
+        L.fillStyle = g === lo ? 'rgba(240,80,106,0.9)' : g === hi ? 'rgba(217,119,87,0.95)' : FARBE.text;
         L.fillText(String(g), 6, S.y(g));
       }
       const R = this.achseR.getContext('2d');
       R.setTransform(dpr, 0, 0, dpr, 0, 0); R.clearRect(0, 0, 40, S.h);
       if (this.daten.insulin.length) {
         const g2 = R.createLinearGradient(40, 0, 0, 0);
-        g2.addColorStop(0, 'rgba(21,27,48,0.95)'); g2.addColorStop(0.7, 'rgba(21,27,48,0.7)'); g2.addColorStop(1, 'rgba(21,27,48,0)');
+        g2.addColorStop(0, 'rgba(38,38,36,0.95)'); g2.addColorStop(0.7, 'rgba(38,38,36,0.7)'); g2.addColorStop(1, 'rgba(38,38,36,0)');
         R.fillStyle = g2; R.fillRect(0, 0, 40, S.h);
         R.font = '500 11px Rubik, system-ui, sans-serif'; R.textAlign = 'right'; R.textBaseline = 'middle';
-        R.fillStyle = 'rgba(183,156,255,0.85)';
+        R.fillStyle = 'rgba(181,166,232,0.85)';
         const st = S.iMax > 100 ? 50 : 20;
         for (let i = st; i < S.iMax; i += st) R.fillText(String(i), 34, S.yi(i));
       }

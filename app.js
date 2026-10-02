@@ -73,9 +73,9 @@
   function marker(eintraege, profil) {
     const m = [];
     for (const e of eintraege) {
-      if (e.typ === 'sport') m.push({ t: e.zeit, breite: e.dauer || 30, farbe: 'rgba(143,180,255,0.08)' });
-      else if (e.typ === 'essen') m.push({ t: e.zeit, farbe: 'rgba(233,237,248,0.16)' });
-      else if (profil === 'typ1') m.push({ t: e.zeit, farbe: 'rgba(183,156,255,0.18)' });
+      if (e.typ === 'sport') m.push({ t: e.zeit, breite: e.dauer || 30, farbe: 'rgba(123,167,212,0.10)' });
+      else if (e.typ === 'essen') m.push({ t: e.zeit, farbe: 'rgba(250,249,245,0.16)' });
+      else if (profil === 'typ1') m.push({ t: e.zeit, farbe: 'rgba(181,166,232,0.2)' });
     }
     return m;
   }
@@ -84,7 +84,7 @@
     berechne();
     const P = GlukoSim.PROFILE[zustand.profil];
     const serien = [{ G: sim.G }];
-    if (vorschau) serien.push({ G: vorschau.sim.G, gestrichelt: true, farbe: 'rgba(233,237,248,0.9)' });
+    if (vorschau) serien.push({ G: vorschau.sim.G, gestrichelt: true, farbe: 'rgba(250,249,245,0.9)' });
     planChart.setDaten({ serien, insulin: zustand.insulinZeigen ? [{ I: sim.I }] : [], ziel: P.ziel, marker: marker(zustand.eintraege, zustand.profil) });
     renderReadout(); renderStats();
   }
@@ -807,7 +807,7 @@
       zustand.apiKey = $('#eKey').value.trim(); zustand.modell = $('#eModell').value.trim() || STANDARD.modell; speichern();
       const out = $('#eTestErgebnis'), b = $('#eTesten');
       b.disabled = true; out.textContent = 'Verbinde …';
-      try { await KI.testen(zustand); out.textContent = 'Verbindung klappt. Modell: ' + zustand.modell; out.style.color = 'var(--mint)'; }
+      try { await KI.testen(zustand); out.textContent = 'Verbindung klappt. Modell: ' + zustand.modell; out.style.color = 'var(--ok)'; }
       catch (e) { out.textContent = e.message; out.style.color = 'var(--rot)'; }
       b.disabled = false;
     };
@@ -844,8 +844,8 @@
   }
 
   // ---------------- Onboarding ----------------
-  const OB_KURVE = '<svg viewBox="0 0 320 150" preserveAspectRatio="none"><defs><linearGradient id="obg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFB547"/><stop offset=".42" stop-color="#FFB547"/><stop offset=".5" stop-color="#5BD6B0"/><stop offset="1" stop-color="#5BD6B0"/></linearGradient></defs>' +
-    '<rect x="0" y="62" width="320" height="58" fill="rgba(91,214,176,0.09)"/>' +
+  const OB_KURVE = '<svg viewBox="0 0 320 150" preserveAspectRatio="none"><defs><linearGradient id="obg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D97757"/><stop offset=".42" stop-color="#D97757"/><stop offset=".5" stop-color="#F0EEE6"/><stop offset="1" stop-color="#F0EEE6"/></linearGradient></defs>' +
+    '<rect x="0" y="62" width="320" height="58" fill="rgba(240,238,230,0.06)"/>' +
     '<path d="M0 104 C30 104 40 100 55 84 S80 48 95 60 115 98 140 100 165 96 180 70 200 22 215 36 240 96 265 100 300 98 320 100" fill="none" stroke="url(#obg)" stroke-width="10" stroke-linecap="round" opacity=".14"/>' +
     '<path d="M0 104 C30 104 40 100 55 84 S80 48 95 60 115 98 140 100 165 96 180 70 200 22 215 36 240 96 265 100 300 98 320 100" fill="none" stroke="url(#obg)" stroke-width="3.5" stroke-linecap="round"/></svg>';
   let obWahl = null;

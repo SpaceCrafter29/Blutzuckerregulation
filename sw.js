@@ -1,5 +1,5 @@
 /* Service Worker: App offline verfügbar machen */
-const CACHE = 'glukosim-v1.0.2';
+const CACHE = 'glukosim-v1.0.3';
 const DATEIEN = ['./', './index.html', './style.css', './app.js', './sim.js', './lebensmittel.js', './chart.js', './ki.js',
   './optimierer.js', './demo.js', './manifest.json', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 

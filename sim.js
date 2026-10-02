@@ -36,19 +36,19 @@
   // Stoffwechsel-Profile
   const PROFILE = {
     gesund: {
-      name: 'Gesund', farbe: '#5BD6B0', ziel: [70, 140],
+      name: 'Gesund', farbe: '#F0EEE6', ziel: [70, 140],
       eigenesInsulin: true, betaFaktor: 1.0, phase1: 3.0, sensorLag: 3, insulinMax: 200,
       si: 6.25e-4, leberSi: 1.0, leberFaktor: 1.0,
       glukagon: 0.12, sportKomp: 0.8, sportSekretion: 0.6
     },
     typ1: {
-      name: 'Typ 1', farbe: '#8FB4FF', ziel: [70, 180],
+      name: 'Typ 1', farbe: '#7BA7D4', ziel: [70, 180],
       eigenesInsulin: false, betaFaktor: 0, phase1: 0, sensorLag: 3,
       si: 6.25e-4, leberSi: 1.0, leberFaktor: 1.0,
       glukagon: 0.02, sportKomp: 0.35, sportSekretion: 1
     },
     typ2: {
-      name: 'Typ 2', farbe: '#FFB547', ziel: [70, 180],
+      name: 'Typ 2', farbe: '#D97757', ziel: [70, 180],
       eigenesInsulin: true, betaFaktor: 0.6, phase1: 0, sensorLag: 15, insulinMax: 55,
       si: 1.8e-4, leberSi: 0.35, leberFaktor: 1.2,
       glukagon: 0.08, sportKomp: 0.65, sportSekretion: 0.7
