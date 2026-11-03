@@ -4,11 +4,16 @@ Web-App (PWA): Du planst einen Tag, und ein Algorithmus findet den Tagesablauf, 
 für **Gesund**, **Diabetes Typ 1** und **Typ 2**.
 
 ## Ablauf
-Jeden neuen Tag startet ein kurzer Assistent:
+Jeden neuen Tag startet ein kurzer Assistent. Zwischen den Eingaben erklären vier kurze Folien, wie die App rechnet
+(überspringbar, in den Einstellungen abschaltbar):
 1. **Stoffwechsel** wählen: Gesund, Typ 1 oder Typ 2.
-2. **Mahlzeiten** (Frühstück, Mittag, Abend) eintragen, z. B. „Nudeln 250 g, Tomatensoße 150 g“ –
+2. *Erklärung:* **Kohlenhydrate** – was sie sind, Werte pro 100 g aus der Tabelle.
+3. *Erklärung:* **Glykämischer Index** – was er ist, wie er gemessen wird, Werte aus den GI-Tabellen.
+4. **Mahlzeiten** (Frühstück, Mittag, Abend) aus der Lebensmittel-Tabelle suchen, Menge einstellen –
    jeweils mit **Zeitraum** (frühestens–spätestens) oder **fester Uhrzeit**. Snacks trägt man nicht ein.
-3. **Bewegung**: Spazieren, Joggen oder Radfahren, 10–60 min, plus wann man Zeit hat (Standard 15:00–20:30).
+5. *Erklärung:* **So rechnet die App** – die Formel mit der eigenen Mahlzeit durchgerechnet, dazu die Kurve.
+6. **Bewegung**: Spazieren, Joggen oder Radfahren, 10–60 min, plus wann man Zeit hat (Standard 15:00–20:30).
+7. *Erklärung:* **So plant der Algorithmus** – Ausprobieren, Durchrechnen, Strafpunkte, bester Plan.
 
 Danach klickt man sich durch die Schritte des Algorithmus (aktuelle Kurve + gestrichelt die vorige):
 1. **Dein Plan** – alles in der Mitte der Zeiträume, ohne Optimierung

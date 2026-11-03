@@ -4,7 +4,7 @@
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const H = Optimierer.hhmm, klon = Optimierer.klon, neueId = Optimierer.neueId, titel = Optimierer.titel;
-  const VERSION = '3.2.1';
+  const VERSION = '3.3.0';
   const SPEICHER = 'glukosim-v3';
   const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
   const PROFIL_INFO = {
@@ -23,7 +23,7 @@
 
   // ---------------- Zustand ----------------
   const STANDARD = {
-    profil: 'gesund', gewicht: 70, insulinAuto: true,
+    profil: 'gesund', gewicht: 70, insulinAuto: true, erklaerungen: true,
     tag: '', mahlzeiten: [], bewegung: [], sportZeitraum: [900, 1230], schritte: [], nichtNoetig: [], schrittIndex: 0,
     insulinZeigen: false, vInsulinZeigen: false, vAus: {}, zoom: 0, vZoom: 0
   };
@@ -301,8 +301,12 @@
     const [von, bis] = Optimierer.STANDARD_ZEITRAUM[art];
     return { items: [], modus: 'zeitraum', von, bis, zeit: Math.round((von + bis) / 2 / 15) * 15 };
   }
+  // Schritte des Assistenten. Dazwischen die Erklär-Folien (Mini-Präsentation): Kohlenhydrate, GI, Formel, Algorithmus
+  const AS_ALLE = ['profil', 'kh', 'gi', 'essen', 'formel', 'bewegung', 'algo'];
+  const AS_INFO = ['kh', 'gi', 'formel', 'algo'];
+  const asListe = () => AS_ALLE.filter(k => !AS_INFO.includes(k) || (z.erklaerungen !== false && !w.ohneInfo));
   function oeffneAssistent(start, neuerTag) {
-    w = { schritt: start || 0, neuerTag: !!neuerTag, profil: z.profil, m: {}, bewegung: neuerTag ? [] : klon(z.bewegung),
+    w = { schritt: typeof start === 'string' ? start : ['profil', 'essen', 'bewegung'][start || 0], neuerTag: !!neuerTag, ohneInfo: false, profil: z.profil, m: {}, bewegung: neuerTag ? [] : klon(z.bewegung),
       sportZeitraum: z.sportZeitraum.slice(), neu: { art: 'Spazieren', dauer: 30 }, busy: false, gezeigt: -1 };
     for (const [art] of MAHLZEITEN) {
       const alt = !neuerTag && z.mahlzeiten.find(m => m.art === art);
@@ -365,15 +369,127 @@
     feld.value = ''; zeigeTreffer(karte, '');
   }
 
+  // ---------- Erklär-Folien (Mini-Präsentation im Assistenten) ----------
+  const kurzName = e => e.name.replace(' (gekocht)', ', gekocht') + (Lebensmittel.einheit(e.name) === 'ml' ? ' (100 ml)' : '');
+  const komma = (x, n) => (Math.round(x * Math.pow(10, n || 0)) / Math.pow(10, n || 0)).toString().replace('.', ',');
+  function balkenHtml(zeilen, max) {
+    return '<div class="mini-balken">' + zeilen.map(r => '<div class="mb-zeile"><span class="mb-name">' + esc(r.name) + '</span><span class="mb-spur"><i style="width:' +
+      Math.max(1.5, 100 * r.wert / max).toFixed(1) + '%;background:' + r.farbe + '"></i></span><b style="color:' + r.farbe + '">' + esc(r.label) + '</b></div>').join('') + '</div>';
+  }
+  // Quelle der Nährwerte ehrlich anzeigen: solange Werte als vorläufig markiert sind, steht das auch so da
+  function naehrQuelle(eintraege) {
+    return eintraege.some(e => /vorläufig|prüfen/i.test(e.quelle || ''))
+      ? 'Lebensmittel-Tabelle der App (Richtwerte, Abgleich mit dem Bundeslebensmittelschlüssel BLS 4.0 läuft)'
+      : 'Bundeslebensmittelschlüssel BLS 4.0, Max Rubner-Institut (2025)';
+  }
+  function infoKopf(k) {
+    const nr = AS_INFO.indexOf(k) + 1;
+    return '<div class="info-kopf"><span class="info-marke">So funktioniert’s · ' + nr + ' von 4</span>' +
+      (k !== 'algo' ? '<button class="text-btn" data-as="ohneInfo">Überspringen</button>' : '') + '</div>';
+  }
+  function infoKH() {
+    const liste = ['Toastbrot', 'Reis (gekocht)', 'Nudeln (gekocht)', 'Apfel', 'Cola'].map(Lebensmittel.eintrag).filter(Boolean);
+    return infoKopf('kh') + '<div class="as-titel">Kohlenhydrate</div>' +
+      '<p class="as-text">Zucker und Stärke aus dem Essen. Im Darm werden sie zu Glukose (Traubenzucker) zerlegt, und die geht ins Blut.</p>' +
+      '<div class="info-karte"><div class="info-ueber">Kohlenhydrate pro 100 g</div>' +
+      balkenHtml(liste.map(e => ({ name: kurzName(e), wert: e.kh, farbe: 'var(--blau)', label: komma(e.kh, 1) + ' g' })), 50) + '</div>' +
+      '<div class="info-arten">' +
+      '<div><i style="background:var(--rot)"></i><b>Zucker</b><span>Cola, Saft, Süßes: geht schnell ins Blut</span></div>' +
+      '<div><i style="background:var(--amber)"></i><b>Stärke</b><span>Nudeln, Brot, Reis: muss erst zerlegt werden</span></div>' +
+      '<div><i style="background:var(--mint)"></i><b>Ballaststoffe</b><span>werden nicht verdaut und bremsen die Aufnahme</span></div></div>' +
+      '<div class="info-merke"><b>In der App:</b> mehr Kohlenhydrate → mehr Zucker im Blut</div>' +
+      '<p class="info-quelle">Quelle: ' + esc(naehrQuelle(liste)) + '</p>';
+  }
+  function infoGI() {
+    const liste = ['Traubenzucker', 'Cornflakes', 'Toastbrot', 'Cola', 'Nudeln (gekocht)', 'Apfel', 'Linsen (gekocht)'].map(Lebensmittel.eintrag).filter(e => e && e.gi);
+    const farbe = gi => gi >= 70 ? 'var(--rot)' : gi > 55 ? 'var(--amber)' : 'var(--mint)';
+    return infoKopf('gi') + '<div class="as-titel">Glykämischer Index</div>' +
+      '<p class="as-text">Der GI zeigt, wie schnell ein Lebensmittel den Blutzucker steigen lässt. Traubenzucker hat den GI 100.</p>' +
+      '<div class="info-karte"><div class="info-ueber">GI aus den internationalen GI-Tabellen</div>' +
+      balkenHtml(liste.map(e => ({ name: e.name.replace(' (gekocht)', ''), wert: e.gi, farbe: farbe(e.gi), label: String(e.gi) })), 100) + '</div>' +
+      '<div class="info-stufen"><div><b style="color:var(--mint)">niedrig</b><span>bis 55</span></div><div><b style="color:var(--amber)">mittel</b><span>56 bis 69</span></div><div><b style="color:var(--rot)">hoch</b><span>ab 70</span></div></div>' +
+      '<div class="info-karte klein"><b>So wird er gemessen</b><span>Testpersonen essen eine Portion mit 50 g Kohlenhydraten. Zwei Stunden lang wird ihr Blutzucker gemessen und mit Traubenzucker verglichen.</span></div>' +
+      '<div class="info-merke"><b>In der App:</b> hoher GI → der Zucker kommt früher und stärker ins Blut</div>' +
+      '<p class="info-quelle">Quelle: Atkinson, Foster-Powell & Brand-Miller (2008), International Tables of Glycemic Index, Universität Sydney · Messverfahren nach ISO 26642</p>';
+  }
+  // Kleine Kurve: nur diese eine Mahlzeit, für das gewählte Profil
+  function miniKurve(G, t0, profil) {
+    const P = GlukoSim.PROFILE[profil], von = Math.max(0, t0 - 30), bis = Math.min(1440, t0 + 270);
+    const werte = Array.from(G.slice(von, bis + 1)), n = werte.length - 1;
+    const lo = Math.min(60, ...werte), hi = Math.max(P.ziel[1] + 20, ...werte) + 12;
+    const W = 320, Hh = 128, x = i => (i / n) * W, y = g => 8 + (1 - (g - lo) / (hi - lo)) * (Hh - 30);
+    let iMax = 0; werte.forEach((g, i) => { if (i >= t0 - von && g > werte[iMax]) iMax = i; });
+    const pkt = werte.map((g, i) => x(i).toFixed(1) + ',' + y(g).toFixed(1)).join(' ');
+    let ticks = '';
+    for (let h = 0; t0 + h * 60 <= bis; h++) {
+      const xi = x(t0 - von + h * 60);
+      ticks += '<line x1="' + xi.toFixed(1) + '" x2="' + xi.toFixed(1) + '" y1="8" y2="' + (Hh - 22) + '" class="mk-raster"/>' +
+        '<text x="' + Math.min(W - 14, Math.max(14, xi)).toFixed(1) + '" y="' + (Hh - 6) + '" class="mk-text" text-anchor="middle">' + (h ? '+' + h + ' h' : 'Essen') + '</text>';
+    }
+    return '<svg viewBox="0 0 ' + W + ' ' + Hh + '" role="img" aria-label="Blutzuckerkurve nach dieser Mahlzeit">' +
+      '<rect x="0" y="' + y(P.ziel[1]).toFixed(1) + '" width="' + W + '" height="' + (y(P.ziel[0]) - y(P.ziel[1])).toFixed(1) + '" class="mk-band"/>' + ticks +
+      '<line x1="0" x2="' + W + '" y1="' + y(P.ziel[1]).toFixed(1) + '" y2="' + y(P.ziel[1]).toFixed(1) + '" class="mk-grenze"/>' +
+      '<text x="4" y="' + (y(P.ziel[1]) - 4).toFixed(1) + '" class="mk-text">' + P.ziel[1] + '</text>' +
+      '<polyline points="' + pkt + '" fill="none" stroke="' + P.farbe + '" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<circle cx="' + x(iMax).toFixed(1) + '" cy="' + y(werte[iMax]).toFixed(1) + '" r="4.5" fill="#E9EDF8"/>' +
+      '<text x="' + Math.min(W - 20, x(iMax) + 8).toFixed(1) + '" y="' + Math.max(16, y(werte[iMax]) - 6).toFixed(1) + '" class="mk-wert">' + Math.round(werte[iMax]) + '</text></svg>';
+  }
+  function infoFormel() {
+    const kandidaten = MAHLZEITEN.map(([art, name]) => ({ art, name, zt: zutatenAus(w.m[art].items) })).filter(x => x.zt.length)
+      .map(x => Object.assign(x, { su: Lebensmittel.summe(x.zt) })).sort((a, b) => b.su.kh - a.su.kh);
+    if (!kandidaten.length) return infoKopf('formel') + '<div class="as-titel">So rechnet die App</div><p class="as-text">Trag zuerst eine Mahlzeit ein.</p>';
+    const k = kandidaten[0], su = k.su, gi = su.gi, m = w.m[k.art];
+    const faktor = 0.35 + 0.65 * gi / 100, wirksam = su.kh * faktor;
+    const proGramm = GlukoSim.PARAM.mgdlProGramm * GlukoSim.PARAM.referenzGewicht / (z.gewicht || 70);
+    const kin = GlukoSim.mahlzeitKinetik(su, z.gewicht), t1 = Math.round(40 * (1 - gi / 100)), th = Math.round(kin.theta), zuschlag = Math.max(0, th - 18 - t1);
+    const t0 = m.modus === 'fest' ? m.zeit : Math.round((Math.min(m.von, m.bis) + Math.max(m.von, m.bis)) / 2 / 15) * 15;
+    const simu = GlukoSim.simuliere([{ id: 'formel', typ: 'essen', zeit: t0, summe: su }], w.profil, opt());
+    let tMax = t0; for (let t = t0; t <= Math.min(1440, t0 + 270); t++) if (simu.G[t] > simu.G[tMax]) tMax = t;
+    const plusW = Math.round(simu.G[tMax] - simu.G[t0]), pName = PROFIL_INFO[w.profil][0];
+    const zeile = (nr, formel, erg) => '<div class="f-zeile"><span class="f-nr">' + nr + '</span><div>' + formel + '<span class="f-erg">' + erg + '</span></div></div>';
+    return infoKopf('formel') + '<div class="as-titel">So rechnet die App</div>' +
+      '<p class="as-text">Mit deinem ' + esc(k.name) + ': ' + esc(Optimierer.zutatenText(k.zt)) + '</p>' +
+      '<div class="info-eingaben"><span>Kohlenhydrate <b>' + Math.round(su.kh) + ' g</b></span><span>GI <b>' + gi + '</b></span><span>Fett <b>' + komma(su.fett) + ' g</b> · Ballaststoffe <b>' + komma(su.ballaststoffe) + ' g</b></span></div>' +
+      '<div class="formel">' +
+      zeile(1, '<b>Wirksamer Zucker</b> = Kohlenhydrate × (0,35 + 0,65 × GI ÷ 100)', Math.round(su.kh) + ' g × ' + faktor.toFixed(2).replace('.', ',') + ' = ' + Math.round(wirksam) + ' g') +
+      zeile(2, '<b>Zucker fürs Blut</b> = wirksamer Zucker × ' + komma(proGramm, 1) + ' mg/dl pro Gramm, verteilt über ca. 3 Stunden', Math.round(wirksam) + ' × ' + komma(proGramm, 1) + ' = ' + Math.round(kin.last) + ' mg/dl') +
+      zeile(3, '<b>Tempo</b>: stärkste Aufnahme nach 18 + 40 × (1 − GI ÷ 100) + Zuschlag für Fett, Eiweiß und Ballaststoffe', '18 + ' + t1 + ' + ' + zuschlag + ' = ' + th + ' min') +
+      zeile(4, '<b>Jede Minute neu</b>: Blutzucker = vorher + Darm + Leber − Gehirn − Muskeln und Fett (Insulin) − Niere', '1440-mal am Tag') +
+      '</div>' +
+      '<div class="info-karte"><div class="info-ueber">Ergebnis für ' + esc(pName) + ' (nur diese Mahlzeit)</div><div class="info-kurve">' + miniKurve(simu.G, t0, w.profil) + '</div>' +
+      '<div class="info-ergebnis">Spitze <b>' + Math.round(simu.G[tMax]) + ' mg/dl</b>, also plus ' + plusW + ' nach ' + (tMax - t0) + ' min</div></div>' +
+      '<p class="info-quelle">Die Zahlen 0,35 · 0,65 · 5,6 sind Modellwerte, eingestellt an der Faustregel aus der Diabetes-Schulung: 10 g Kohlenhydrate heben den Blutzucker um 25 bis 40 mg/dl. Aufnahme im Darm nach Hovorka u. a. (2004).</p>';
+  }
+  function infoAlgo() {
+    const zeile = (nr, t, d) => '<div class="f-zeile"><span class="f-nr">' + nr + '</span><div><b>' + t + '</b><span class="f-text">' + d + '</span></div></div>';
+    return infoKopf('algo') + '<div class="as-titel">So plant der Algorithmus</div>' +
+      '<p class="as-text">Er sucht für deine Mahlzeiten und deine Bewegung die besten Uhrzeiten.</p>' +
+      '<div class="formel">' +
+      zeile(1, 'Ausprobieren', 'Jede erlaubte Uhrzeit in deinem Zeitraum, erst in 30-min-Schritten, dann genauer in 15-min-Schritten.') +
+      zeile(2, 'Durchrechnen', 'Für jede Möglichkeit wird die ganze Tageskurve simuliert.') +
+      zeile(3, 'Strafpunkte', 'Jede Minute über dem Ziel kostet Punkte, unter 70 zählt am meisten. Verschieben kostet auch ein bisschen.') +
+      zeile(4, 'Bester Plan', 'Die wenigsten Punkte gewinnen, aber nur, wenn es spürbar besser ist und kein Wert schlechter wird.') +
+      '</div>' +
+      '<div class="info-karte klein"><b>Regeln, damit der Tag realistisch bleibt</b><span>Nur in deinem Zeitraum · Frühstück → Mittag → Abend · mindestens 1 h zwischen Mahlzeiten, 2 h zwischen Hauptmahlzeiten · kein Sport direkt nach dem Essen</span></div>' +
+      '<div class="info-merke"><b>Danach:</b> Dein Plan → Beste Uhrzeiten → Snack-Vorschlag → Kleine Ausnahme</div>' +
+      '<p class="info-quelle">Zielbereich bei Diabetes 70 bis 180 mg/dl (Battelino u. a. 2019), gesund 70 bis 140 mg/dl. Muskeln nehmen beim Sport Zucker auch ohne Insulin auf (Richter u. a. 2004).</p>';
+  }
+
   function zeigeAssistent() {
-    const s = w.schritt, punkte = '<div class="ob-punkte">' + [0, 1, 2].map(i => '<i class="' + (i === s ? 'an' : '') + '"></i>').join('') + '</div>';
+    let liste = asListe();
+    if (!liste.includes(w.schritt)) w.schritt = AS_ALLE.slice(AS_ALLE.indexOf(w.schritt)).find(k => liste.includes(k)) || liste[0];
+    const s = w.schritt, idx = liste.indexOf(s), letzter = idx === liste.length - 1;
+    const punkte = '<div class="ob-punkte">' + liste.map((k, i) => '<i class="' + (i === idx ? 'an' : '') + '"></i>').join('') + '</div>';
     const zu = z.schritte.length ? '<button class="icon-btn" data-as="zu" aria-label="Schließen">' + ico('x') + '</button>' : '';
-    let inhalt = '', fuss = '';
-    if (s === 0) {
+    let inhalt = '';
+    if (s === 'profil') {
       inhalt = '<div class="as-titel">' + (w.neuerTag ? 'Neuer Tag' : 'Stoffwechsel') + '</div><p class="as-text">Für wen planen wir heute?</p>' + profilKarten(w.profil) +
         '<button class="text-btn as-demo" data-as="demo">Beispieltag laden</button>';
-      fuss = '<button class="btn primaer" data-as="weiter">Weiter</button>';
-    } else if (s === 1) {
+    } else if (s === 'kh') inhalt = infoKH();
+    else if (s === 'gi') inhalt = infoGI();
+    else if (s === 'formel') inhalt = infoFormel();
+    else if (s === 'algo') inhalt = infoAlgo();
+    else if (s === 'essen') {
       inhalt = '<div class="as-titel">Deine Mahlzeiten</div><p class="as-text">Trag ein, was du isst und wann es geht. Snacks schlägt der Algorithmus selbst vor.</p>' +
         MAHLZEITEN.map(([art, name, ph]) => {
           const m = w.m[art];
@@ -387,7 +503,6 @@
               : '<div class="as-zeit"><label>Uhrzeit<input type="time" data-feld="zeit" value="' + H(m.zeit) + '"></label></div>') + '</div>';
         }).join('') + '<p class="klein">Ohne Lebensmittel wird die Mahlzeit ausgelassen. Es gibt nur Lebensmittel aus der Tabelle, damit jeder Wert eine Quelle hat.</p>' +
         '<details class="as-liste-lm"><summary>Welche Lebensmittel kennt die App?</summary><p class="klein">' + esc(Lebensmittel.DB.map(e => e.name).join(', ')) + '</p></details>';
-      fuss = '<button class="btn tonal" data-as="zurueck">Zurück</button><button class="btn primaer" data-as="weiter">Weiter</button>';
     } else {
       inhalt = '<div class="as-titel">Bewegung</div><p class="as-text">Wie lange bewegst du dich heute? Wann genau, entscheidet der Algorithmus.</p>' +
         '<div class="as-bewegung-neu"><div class="segment" data-feld="art" role="radiogroup">' + Object.keys(BEWEGUNG).map(a => '<button data-wert="' + a + '" role="radio" aria-checked="' + (w.neu.art === a) + '">' + a + '</button>').join('') + '</div>' +
@@ -395,8 +510,10 @@
         '<button class="btn tonal" data-as="plus">' + ico('plus') + 'Hinzufügen</button></div>' +
         (w.bewegung.length ? '<ul class="as-liste">' + w.bewegung.map(b => '<li><span class="ico">' + ico('sport') + '</span><span class="txt">' + esc(b.art) + ', ' + b.dauer + ' min</span><button data-weg="' + b.id + '" aria-label="Entfernen">' + ico('x') + '</button></li>').join('') + '</ul>' : '<p class="klein">Noch keine Bewegung. Du kannst das auch auslassen.</p>') +
         '<div class="as-zeit"><label>Zeit für Bewegung ab<input type="time" data-feld="sv" value="' + H(w.sportZeitraum[0]) + '"></label><label>bis<input type="time" data-feld="sb" value="' + H(w.sportZeitraum[1]) + '"></label></div>';
-      fuss = '<button class="btn tonal" data-as="zurueck">Zurück</button><button class="btn primaer" data-as="berechnen">' + (w.busy ? '<span class="spinner"></span>Berechne …' : 'Tag berechnen') + '</button>';
     }
+    const fuss = (idx > 0 ? '<button class="btn tonal" data-as="zurueck">Zurück</button>' : '') +
+      (letzter ? '<button class="btn primaer" data-as="berechnen">' + (w.busy ? '<span class="spinner"></span>Berechne …' : 'Tag berechnen') + '</button>'
+        : '<button class="btn primaer" data-as="weiter">Weiter</button>');
     // Gleicher Schritt neu gezeichnet: Scroll-Position behalten, nicht neu einblenden
     const alt = asEl.querySelector('.as-schritt'), gleich = w.gezeigt === s, top = gleich && alt ? alt.scrollTop : 0;
     asEl.innerHTML = '<div class="as-kopf">' + punkte + zu + '</div><div class="as-schritt' + (gleich ? ' ruhig' : '') + '">' + inhalt + '</div><div class="as-fuss">' + fuss + '</div>';
@@ -455,18 +572,19 @@
     const b = ev.target.closest('[data-as]'); if (!b) return;
     const a = b.dataset.as;
     if (a === 'zu') { schliesseAssistent(); return; }
-    if (a === 'zurueck') { w.schritt--; zeigeAssistent(); return; }
+    const liste = asListe(), idx = liste.indexOf(w.schritt);
+    if (a === 'zurueck') { w.schritt = liste[Math.max(0, idx - 1)]; zeigeAssistent(); return; }
+    if (a === 'ohneInfo') { w.ohneInfo = true; w.schritt = AS_ALLE.slice(AS_ALLE.indexOf(w.schritt) + 1).find(k => !AS_INFO.includes(k)) || 'bewegung'; zeigeAssistent(); return; }
     if (a === 'demo') {
       const d = Demo.eingaben();
       for (const m of d.mahlzeiten) w.m[m.art] = ausMahlzeit(m.fest ? m : Object.assign({}, m, { zeit: null }));
       w.bewegung = d.bewegung.map(x => Object.assign({}, x, { id: neueId() })); w.sportZeitraum = d.sportZeitraum.slice();
-      w.schritt = 1; zeigeAssistent(); toast('Beispieltag eingetragen. Bei Typ 2 zeigt er alle Schritte.'); return;
+      w.schritt = liste[idx + 1] || 'essen'; zeigeAssistent(); toast('Beispieltag eingetragen. Bei Typ 2 zeigt er alle Schritte.'); return;
     }
     if (a === 'plus') { w.bewegung.push({ id: neueId(), art: w.neu.art, dauer: w.neu.dauer, intensitaet: BEWEGUNG[w.neu.art] }); vib(8); zeigeAssistent(); return; }
-    if (a === 'weiter' && w.schritt === 0) { w.schritt = 1; zeigeAssistent(); return; }
-    if (a === 'weiter' && w.schritt === 1) {
-      if (!MAHLZEITEN.some(([art]) => w.m[art].items.length)) { toast('Füg mindestens ein Lebensmittel hinzu.'); return; }
-      w.schritt = 2; zeigeAssistent(); return;
+    if (a === 'weiter') {
+      if (w.schritt === 'essen' && !MAHLZEITEN.some(([art]) => w.m[art].items.length)) { toast('Füg mindestens ein Lebensmittel hinzu.'); return; }
+      w.schritt = liste[Math.min(liste.length - 1, idx + 1)]; zeigeAssistent(); return;
     }
     if (a === 'berechnen') {
       w.busy = true; zeigeAssistent();
@@ -521,6 +639,7 @@
   function renderEinstellungen() {
     segmentWahl($('#eProfil'), z.profil);
     $('#eInsulinAuto').checked = !!z.insulinAuto;
+    $('#eErklaerungen').checked = z.erklaerungen !== false;
     $('#eGewicht').value = z.gewicht;
     const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
     $('#eInstallieren').hidden = !installEvent || standalone;
@@ -530,6 +649,7 @@
   function bindeEinstellungen() {
     $('#eProfil').onclick = ev => { const b = ev.target.closest('button'); if (b) setzeProfil(b.dataset.wert); };
     $('#eInsulinAuto').onchange = ev => { z.insulinAuto = ev.target.checked; if (z.mahlzeiten.length) berechneSchritte(); neuBerechnet(); };
+    $('#eErklaerungen').onchange = ev => { z.erklaerungen = ev.target.checked; speichern(); };
     $('#eGewicht').onchange = ev => { z.gewicht = Math.max(25, Math.min(200, parseFloat(ev.target.value) || 70)); ev.target.value = z.gewicht; if (z.mahlzeiten.length) berechneSchritte(); neuBerechnet(); };
     $('#eInstallieren').onclick = async () => { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) { /* abgebrochen */ } installEvent = null; renderEinstellungen(); };
     $('#eNeuerTag').onclick = () => oeffneAssistent(0, true);
@@ -562,7 +682,7 @@
     $('#btnVergleichErklaeren').onclick = vergleichErklaeren;
     $('#btnNeuerTag').onclick = () => oeffneAssistent(0, true);
     $('#btnStartLeer').onclick = () => oeffneAssistent(0, true);
-    $('#btnAendern').onclick = () => oeffneAssistent(1, false);
+    $('#btnAendern').onclick = () => oeffneAssistent('essen', false);
     $('#profilChip').onclick = profilSheet;
     $('#nav').onclick = ev => { const b = ev.target.closest('button'); if (b) zeigeSeite(b.dataset.ziel); };
     bindeEinstellungen();

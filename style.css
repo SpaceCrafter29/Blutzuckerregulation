@@ -498,3 +498,48 @@ input[type="range"] { width: 100%; accent-color: var(--blau); height: 28px; }
 .as-treffer button:active { background: var(--flaeche3); }
 .as-treffer .neben { flex: none; font-size: 12px; color: var(--text2); }
 .as-treffer .leer { padding: 12px; font-size: 13px; color: var(--amber); }
+
+/* Erklär-Folien im Assistenten (Mini-Präsentation) */
+.info-kopf { display: flex; justify-content: space-between; align-items: center; margin-bottom: -8px; }
+.info-marke { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--mint); }
+.info-kopf .text-btn { padding: 6px 0; font-size: 13px; color: var(--text2); }
+.info-karte { background: var(--flaeche); border-radius: var(--r-mittel); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.info-karte.klein { gap: 4px; }
+.info-karte.klein b { font-size: 14px; font-weight: 600; }
+.info-karte.klein span { font-size: 13px; color: var(--text2); line-height: 1.45; }
+.info-ueber { font-size: 12px; color: var(--text2); }
+.mini-balken { display: flex; flex-direction: column; gap: 9px; }
+.mb-zeile { display: grid; grid-template-columns: 104px 1fr 42px; align-items: center; gap: 10px; font-size: 13px; }
+.mb-name { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mb-spur { height: 12px; }
+.mb-spur i { display: block; height: 100%; border-radius: 6px; }
+.mb-zeile b { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.info-arten { display: flex; flex-direction: column; gap: 10px; padding: 0 2px; }
+.info-arten div { display: grid; grid-template-columns: 10px 1fr; column-gap: 12px; }
+.info-arten i { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; grid-row: span 2; }
+.info-arten b { font-size: 15px; font-weight: 600; }
+.info-arten span { grid-column: 2; font-size: 13px; color: var(--text2); }
+.info-stufen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.info-stufen div { background: var(--flaeche); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; }
+.info-stufen b { font-size: 14px; font-weight: 600; }
+.info-stufen span { font-size: 12px; color: var(--text2); }
+.info-merke { background: rgba(91,214,176,0.1); border-radius: 12px; padding: 10px 12px; font-size: 14px; }
+.info-merke b { color: var(--mint); font-weight: 600; }
+.info-quelle { font-size: 11px; color: var(--text3); margin: 0; line-height: 1.45; }
+.info-eingaben { display: flex; gap: 6px; flex-wrap: wrap; }
+.info-eingaben span { background: var(--flaeche2); border-radius: 999px; padding: 6px 12px; font-size: 13px; color: var(--text2); }
+.info-eingaben b { color: var(--text); font-weight: 600; }
+.formel { display: flex; flex-direction: column; gap: 8px; }
+.f-zeile { display: grid; grid-template-columns: 26px 1fr; gap: 10px; background: var(--flaeche); border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.4; color: var(--text2); }
+.f-nr { width: 26px; height: 26px; border-radius: 50%; background: var(--flaeche2); color: var(--mint); font-weight: 600; font-size: 13px; display: grid; place-items: center; }
+.f-zeile b { color: var(--text); font-weight: 600; }
+.f-erg { display: block; color: var(--mint); font-weight: 600; font-size: 15px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.f-text { display: block; margin-top: 2px; }
+.info-kurve svg { display: block; width: 100%; height: auto; }
+.mk-band { fill: rgba(91,214,176,0.07); }
+.mk-raster { stroke: rgba(233,237,248,0.07); stroke-width: 1; }
+.mk-grenze { stroke: rgba(91,214,176,0.5); stroke-width: 1; stroke-dasharray: 3 4; }
+.mk-text { fill: var(--text3); font-size: 10px; font-family: var(--font); }
+.mk-wert { fill: var(--text); font-size: 12px; font-weight: 600; font-family: var(--font); }
+.info-ergebnis { font-size: 14px; color: var(--text2); }
+.info-ergebnis b { color: var(--text); }
