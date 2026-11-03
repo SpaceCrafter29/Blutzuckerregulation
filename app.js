@@ -4,7 +4,7 @@
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const H = Optimierer.hhmm, klon = Optimierer.klon, neueId = Optimierer.neueId, titel = Optimierer.titel;
-  const VERSION = '3.5.0';
+  const VERSION = '3.5.1';
   const SPEICHER = 'glukosim-v3';
   const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
   const PROFIL_INFO = {
@@ -834,7 +834,13 @@
     // Jeden neuen Tag: Einführung
     if (z.tag !== heute() || !z.schritte.length) oeffneAssistent(0, true);
 
-    if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => { /* ohne Offline-Modus */ });
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      // Neue Version installiert: Seite einmal neu laden, damit sie sofort zu sehen ist
+      const hatteSW = !!navigator.serviceWorker.controller;
+      let neuGeladen = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hatteSW && !neuGeladen) { neuGeladen = true; location.reload(); } });
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { /* ohne Offline-Modus */ });
+    }
     document.fonts && document.fonts.ready.then(() => { planChart.zeichne(); vChart.zeichne(); });
   }
   // Erst die Lebensmittel-Tabelle laden, dann starten

@@ -1,10 +1,12 @@
-/* Service Worker: App offline verfügbar machen */
-const CACHE = 'glukosim-v3.5.0';
+/* Service Worker: App offline verfügbar machen.
+ * Erst Netz (damit immer die neueste Version kommt), ohne Netz aus dem Cache. */
+const CACHE = 'glukosim-v3.5.1';
 const DATEIEN = ['./', './index.html', './style.css', './app.js', './sim.js', './lebensmittel.js', './lebensmittel.csv', './chart.js',
   './optimierer.js', './demo.js', './manifest.json', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(DATEIEN)).then(() => self.skipWaiting()));
+  // cache: 'reload' holt die Dateien frisch vom Server, nicht aus dem Browser-Cache
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(DATEIEN.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('glukosim-') && k !== CACHE).map(k => caches.delete(k))))
@@ -13,7 +15,6 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
-  if (url.hostname === 'generativelanguage.googleapis.com') return; // KI nie cachen
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
     e.respondWith(caches.open(CACHE).then(async c => {
       const hit = await c.match(e.request);
@@ -23,10 +24,18 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (url.origin !== location.origin) return;
-  // App-Dateien: erst Cache, im Hintergrund aktualisieren
-  e.respondWith(caches.open(CACHE).then(async c => {
-    const hit = await c.match(e.request, { ignoreSearch: true });
-    const netz = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => null);
-    return hit || (await netz) || c.match('./index.html');
-  }));
+  // App-Dateien: erst Netz (max. 4 s), sonst Cache
+  e.respondWith((async () => {
+    const c = await caches.open(CACHE);
+    const ausCache = () => c.match(e.request, { ignoreSearch: true }).then(r => r || c.match('./index.html'));
+    const netz = fetch(e.request, { cache: 'no-cache' }).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; });
+    const zuLang = new Promise(res => setTimeout(() => res(null), 4000));
+    try {
+      const r = await Promise.race([netz, zuLang]);
+      if (r) return r;
+      return (await ausCache()) || await netz;
+    } catch (err) {
+      return (await ausCache()) || new Response('Offline', { status: 503 });
+    }
+  })());
 });
