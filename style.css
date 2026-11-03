@@ -591,3 +591,14 @@ input[type="range"] { width: 100%; accent-color: var(--blau); height: 28px; }
 .q-grenzen { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text2); display: flex; flex-direction: column; gap: 6px; }
 .q-literatur { margin: 0; padding-left: 22px; font-size: 12px; color: var(--text2); line-height: 1.45; display: flex; flex-direction: column; gap: 8px; }
 .q-literatur a { color: var(--blau); word-break: break-all; }
+
+/* QR-Code zum Teilen */
+.teilen { display: flex; gap: 14px; align-items: center; margin-top: 22px; padding: 14px; background: var(--flaeche); border-radius: var(--r-mittel); }
+.teilen-qr { flex: none; width: 112px; height: 112px; padding: 8px; background: #fff; border-radius: 14px; }
+.teilen-qr svg.qr, .qr-gross svg.qr { display: block; width: 100%; height: 100%; }
+.teilen-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.teilen-txt b { font-size: 16px; font-weight: 600; }
+.teilen-txt span { font-size: 13px; color: var(--text2); line-height: 1.4; }
+.teilen-txt .text-btn { align-self: flex-start; padding: 4px 0 0; }
+.qr-gross { width: min(78vw, 320px); aspect-ratio: 1; margin: 6px auto 0; padding: 16px; background: #fff; border-radius: 20px; }
+.qr-url { text-align: center; font-size: 14px; color: var(--text2); margin: 4px 0 6px; word-break: break-all; }

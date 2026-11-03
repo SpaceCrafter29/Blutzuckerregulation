@@ -4,7 +4,7 @@
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const H = Optimierer.hhmm, klon = Optimierer.klon, neueId = Optimierer.neueId, titel = Optimierer.titel;
-  const VERSION = '3.5.1';
+  const VERSION = '3.6.0';
   const SPEICHER = 'glukosim-v3';
   const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
   const PROFIL_INFO = {
@@ -260,6 +260,12 @@
     if (!sheetOffen) { history.pushState({ seite, sheet: true }, ''); sheetOffen = true; }
     requestAnimationFrame(() => { sheet.classList.add('offen'); scrim.classList.add('offen'); });
     beiMount && beiMount(sheetInhalt);
+  }
+  // QR-Code zur App (zeigt immer auf die GitHub-Pages-Adresse)
+  const APP_URL = 'https://spacecrafter29.github.io/Blutzuckerregulation/';
+  function qrSheet() {
+    oeffneSheet('<h3>GlukoSim ausprobieren</h3><p class="untertitel">Mit der Handy-Kamera scannen. Danach im Browser-Menü „Zum Startbildschirm hinzufügen“, dann läuft sie wie eine App.</p>' +
+      '<div class="qr-gross"><svg class="qr"><use href="#i-qr"/></svg></div><p class="qr-url">' + esc(APP_URL.replace('https://', '').replace(/\/$/, '')) + '</p>');
   }
   function schliesseSheetUI() { sheetOffen = false; sheet.classList.remove('offen'); scrim.classList.remove('offen'); sheet.style.transform = ''; }
   function schliesseSheet() { if (!sheetOffen) return; if (history.state && history.state.sheet) history.back(); else schliesseSheetUI(); }
@@ -793,6 +799,7 @@
     $('#eGewicht').onchange = ev => { z.gewicht = Math.max(25, Math.min(200, parseFloat(ev.target.value) || 70)); ev.target.value = z.gewicht; if (z.mahlzeiten.length) berechneSchritte(); neuBerechnet(); };
     $('#eInstallieren').onclick = async () => { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) { /* abgebrochen */ } installEvent = null; renderEinstellungen(); };
     $('#eNeuerTag').onclick = () => oeffneAssistent(0, true);
+    $('#eQr').onclick = qrSheet;
     $('#eDemo').onclick = () => { oeffneAssistent('start', true); waehleStart('beispiel'); };
     $('#eReset').onclick = () => bestaetigen('Alles zurücksetzen?', 'Plan, Mahlzeiten und Einstellungen werden gelöscht.', 'Zurücksetzen', () => {
       Object.assign(z, klon(STANDARD)); speichern(); renderPlan(); oeffneAssistent(0, true);
@@ -823,6 +830,7 @@
     $('#btnNeuerTag').onclick = () => oeffneAssistent(0, true);
     $('#btnStartLeer').onclick = () => oeffneAssistent(0, true);
     $('#btnAendern').onclick = () => oeffneAssistent('essen', false);
+    $('#btnQr').onclick = qrSheet; $('#btnQrGross').onclick = qrSheet;
     $('#profilChip').onclick = profilSheet;
     $('#nav').onclick = ev => { const b = ev.target.closest('button'); if (b) zeigeSeite(b.dataset.ziel); };
     bindeEinstellungen();
