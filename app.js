@@ -4,7 +4,7 @@
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const H = Optimierer.hhmm, klon = Optimierer.klon, neueId = Optimierer.neueId, titel = Optimierer.titel;
-  const VERSION = '3.4.0';
+  const VERSION = '3.5.0';
   const SPEICHER = 'glukosim-v3';
   const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
   const PROFIL_INFO = {
@@ -634,8 +634,8 @@
   });
 
   // ---------------- Navigation ----------------
-  const SEITEN = ['plan', 'vergleich', 'einstellungen'];
-  const SEITEN_TITEL = { plan: 'Heute', vergleich: 'Vergleich', einstellungen: 'Einstellungen' };
+  const SEITEN = ['plan', 'vergleich', 'quellen', 'einstellungen'];
+  const SEITEN_TITEL = { plan: 'Heute', vergleich: 'Vergleich', quellen: 'Quellen', einstellungen: 'Einstellungen' };
   function zeigeSeite(s, ausHistory) {
     if (!SEITEN.includes(s)) s = 'plan';
     const alt = seite; seite = s;
@@ -656,11 +656,124 @@
     $('#appTitel').textContent = SEITEN_TITEL[s];
     if (s === 'vergleich') renderVergleich();
     if (s === 'einstellungen') renderEinstellungen();
+    if (s === 'quellen') renderQuellen();
   }
   window.addEventListener('popstate', ev => {
     if (sheetOffen) { schliesseSheetUI(); return; }
     zeigeSeite((ev.state && ev.state.seite) || 'plan', true);
   });
+
+
+  // ---------------- Quellen: woher Formeln und Werte kommen ----------------
+  const ART_TEXT = { quelle: 'Aus Quelle', eingestellt: 'Eingestellt', modell: 'Modell', regel: 'Eigene Regel', richtwert: 'Richtwert' };
+  const zahl = x => String(x).replace('.', ',');
+  function formelListe() {
+    const P = GlukoSim.PARAM, G = GlukoSim.PROFILE;
+    return [
+      { titel: 'Zucker aus dem Darm ins Blut', art: 'quelle', formel: 'Aufnahme pro Minute = Zucker × t ÷ τ² × e^(−t ÷ τ)',
+        text: 'Das Essen geht erst in den Magen, dann in den Dünndarm. Die Aufnahme steigt an, ist nach τ Minuten am stärksten und läuft dann langsam aus.',
+        von: 'Zwei-Kammer-Modell nach Hovorka u. a. (2004)' },
+      { titel: 'Wirksamer Zucker', art: 'eingestellt', formel: 'Kohlenhydrate × (0,35 + 0,65 × GI ÷ 100)',
+        text: 'Kohlenhydrate aus der Lebensmittel-Tabelle, GI aus den GI-Tabellen. Annahme: Lebensmittel mit niedrigem GI heben den Blutzucker insgesamt weniger.',
+        von: 'GI: Atkinson u. a. (2008). Die Faktoren 0,35 und 0,65 sind im Modell eingestellt.' },
+      { titel: 'Wie viel mg/dl pro Gramm', art: 'eingestellt', formel: zahl(P.mgdlProGramm) + ' mg/dl pro Gramm × ' + P.referenzGewicht + ' kg ÷ Körpergewicht',
+        text: 'So eingestellt, dass 10 g Kohlenhydrate den Blutzucker ohne Insulin um etwa 25 bis 40 mg/dl heben. Wer schwerer ist, hat mehr Blut, deshalb steigt es weniger.',
+        von: 'Faustregel aus der Diabetes-Schulung (Apotheken Umschau, Kohlenhydrateinheit)' },
+      { titel: 'Tempo der Aufnahme', art: 'eingestellt', formel: 'τ = 18 + 40 × (1 − GI ÷ 100) + 0,5 × Fett + 0,2 × Eiweiß + 1 × Ballaststoffe + 0,05 × Kohlenhydrate (in Minuten)',
+        text: 'Hoher GI heißt schnell. Fett, Eiweiß und Ballaststoffe machen den Magen langsamer, große Portionen auch.',
+        von: 'Spitze bei Gesunden ca. 1 h nach dem Essen (ADA 2001) · Fett verzögert und verlängert den Anstieg (Wolpert u. a. 2013)' },
+      { titel: 'Jede Minute neu', art: 'modell', formel: 'Blutzucker neu = vorher + Darm + Leber − Gehirn − Muskeln und Fett − Niere',
+        text: 'Das Gehirn verbraucht ' + zahl(P.gehirn) + ' mg/dl pro Minute, auch ohne Insulin. Die Leber gibt nüchtern Zucker ab, mit viel Insulin weniger, bei Unterzucker mehr (Glukagon). 1440 Schritte ergeben einen Tag.',
+        von: 'Aufbau wie in Modellen aus der Diabetes-Forschung (Hovorka u. a. 2004)' },
+      { titel: 'Insulin', art: 'eingestellt', formel: 'Muskeln und Fett = Insulinempfindlichkeit × Insulin × Blutzucker',
+        text: 'Gesund: Die Beta-Zellen schütten mehr Insulin aus, wenn der Blutzucker steigt. Typ 2: Insulin wirkt nur etwa ' + Math.round(100 * G.typ2.si / G.gesund.si) + ' % so stark, und die Ausschüttung ist begrenzt. Typ 1: kein eigenes Insulin.',
+        von: 'Typ 2 so eingestellt, dass der Zuckertest die Diabetes-Grenze trifft (2-h-Wert ab 200 mg/dl, Kriterien der DDG)' },
+      { titel: 'Gespritztes Insulin bei Typ 1', art: 'quelle', formel: '1 Einheit pro 10 g Kohlenhydrate, 15 min vor dem Essen · 16 Einheiten Langzeitinsulin',
+        text: 'Schnelles Insulin wirkt am stärksten nach etwa ' + P.schnellPeak + ' min, Langzeitinsulin gleichmäßig über den ganzen Tag.',
+        von: 'Faustregel (Apotheken Umschau) · Fachinfo Insulin aspart: Wirkbeginn 10–20 min, Maximum nach 1–3 h · Insulin glargin wirkt 20–27 h (diabinfo.de)' },
+      { titel: 'Niere', art: 'quelle', formel: 'ab ' + P.nierenSchwelle + ' mg/dl scheidet die Niere Zucker aus',
+        text: 'Über der Nierenschwelle landet Zucker im Urin, das bremst sehr hohe Werte.',
+        von: 'Nierenschwelle ca. 180 mg/dl (Altmeyers Enzyklopädie, nach Herold 2020)' },
+      { titel: 'Sport', art: 'eingestellt', formel: 'Muskeln holen Zucker ohne Insulin: leicht ' + zahl(P.sport.leicht) + ' · mittel ' + zahl(P.sport.mittel) + ' mg/dl pro Minute',
+        text: 'Arbeitende Muskeln bauen den Zucker-Transporter GLUT4 in die Zellwand ein. Danach wirkt Insulin noch etwa ' + Math.round(P.sportNachwirkung / 60) + ' Stunden lang stärker.',
+        von: 'GLUT4: Richter u. a. (2004) · Spazieren nach dem Essen senkt den Blutzucker: DiPietro u. a. (2013)' },
+      { titel: 'Strafpunkte des Algorithmus', art: 'regel', formel: 'pro Minute: (Blutzucker − Obergrenze) ÷ 5 + (Blutzucker − Obergrenze + 30) ÷ 30 + (70 − Blutzucker), jeder Teil nur, wenn er positiv ist',
+        text: 'Zu hoch kostet Punkte, knapp unter der Grenze ein bisschen, unter 70 am meisten. Dazu 0,5 Punkte für jede Minute über der Grenze und 2 Punkte pro Stunde Verschieben. Der Plan mit den wenigsten Punkten gewinnt.',
+        von: 'Eigene Regel · Obergrenze ' + G.gesund.ziel[1] + ' bei Gesunden, ' + G.typ2.ziel[1] + ' bei Diabetes (Zielbereich 70–180 nach Battelino u. a. 2019)' }
+    ];
+  }
+  let selbsttestCache = null;
+  function selbsttest() {
+    if (selbsttestCache) return selbsttestCache;
+    const S = GlukoSim, o = { gewicht: 70 };
+    const og = { id: 'og', typ: 'essen', zeit: 480, summe: { kh: 75, gi: 100, fett: 0, protein: 0, ballaststoffe: 0 } };
+    const g = S.simuliere([og], 'gesund', o), t2 = S.simuliere([og], 'typ2', o);
+    const basal = { id: 'b', typ: 'insulin', art: 'lang', einheiten: 16, zeit: 1320 };
+    const ohneB = S.simuliere([basal], 'typ1', o);
+    const ke = gi => { const m = { id: 'm', typ: 'essen', zeit: 720, summe: { kh: 10, gi, fett: 0, protein: 0, ballaststoffe: 0 } };
+      const mit = S.simuliere([m, basal], 'typ1', o); let d = 0; for (let t = 720; t <= 1080; t++) d = Math.max(d, mit.G[t] - ohneB.G[t]); return Math.round(d); };
+    const zt = [Lebensmittel.zutat('Nudeln (gekocht)', 250), Lebensmittel.zutat('Tomatensoße', 150)].filter(Boolean);
+    const leer = S.simuliere([], 'gesund', o), nud = S.simuliere([{ id: 'n', typ: 'essen', zeit: 720, summe: Lebensmittel.summe(zt) }], 'gesund', o);
+    let dN = 0, tN = 720; for (let t = 720; t <= 1080; t++) { const x = nud.G[t] - leer.G[t]; if (x > dN) { dN = x; tN = t; } }
+    const d = Demo.eingaben(), tag = S.statistik(S.simuliere(d.mahlzeiten.map(m => ({ id: m.id, typ: 'essen', zeit: m.fest ? m.zeit : Math.round((m.von + m.bis) / 2 / 15) * 15, summe: m.summe })), 'gesund', o), 'gesund');
+    const keLo = ke(40), keHi = ke(100);
+    selbsttestCache = [
+      { was: 'Zuckertest (75 g Traubenzucker), gesund: Wert nach 2 h', wert: Math.round(g.G[600]) + ' mg/dl', soll: 'Normal: unter 140 mg/dl (DDG)', ok: g.G[600] < 140 },
+      { was: 'Zuckertest, Typ 2: Wert nach 2 h', wert: Math.round(t2.G[600]) + ' mg/dl', soll: 'Diabetes: ab 200 mg/dl (DDG)', ok: t2.G[600] >= 200 },
+      { was: 'Nüchternwert Typ 2', wert: Math.round(t2.G[475]) + ' mg/dl', soll: 'Diabetes: ab 126 mg/dl (DDG)', ok: t2.G[475] >= 126 },
+      { was: '10 g Kohlenhydrate (Typ 1, ohne Mahlzeiten-Insulin)', wert: 'plus ' + keLo + '–' + keHi, soll: 'Faustregel: plus 25–40 mg/dl. Langsame Kohlenhydrate liegen im Modell etwas darunter.', ok: keLo >= 25 && keHi <= 40, teils: keHi >= 25 && keLo < 25 },
+      { was: 'Nudeln mit Soße, gesund: Spitze', wert: 'nach ' + (tN - 720) + ' min', soll: 'Bei Gesunden ca. 1 h nach dem Essen (ADA 2001)', ok: tN - 720 >= 40 && tN - 720 <= 90 },
+      { was: 'Beispieltag, gesund: Zeit zwischen 70 und 140', wert: tag.zielProzent + ' %', soll: 'Gesunde Menschen: ca. 96 % der Zeit (Shah u. a. 2019). Das Modell ist etwas ruhiger als echte Menschen.', ok: tag.zielProzent >= 90 }
+    ];
+    return selbsttestCache;
+  }
+  const LITERATUR = [
+    ['Max Rubner-Institut (2025): Bundeslebensmittelschlüssel (BLS), Version 4.0. CC BY 4.0.', 'https://blsdb.de'],
+    ['Atkinson FS, Foster-Powell K, Brand-Miller JC (2008): International Tables of Glycemic Index and Glycemic Load Values: 2008. Diabetes Care 31(12):2281–2283.', 'https://pmc.ncbi.nlm.nih.gov/articles/PMC2584181/'],
+    ['ISO 26642:2010: Food products – Determination of the glycaemic index (GI) and recommendation for food classification.'],
+    ['Hovorka R et al. (2004): Nonlinear model predictive control of glucose concentration in subjects with type 1 diabetes. Physiol Meas 25(4):905–920.'],
+    ['American Diabetes Association (2001): Postprandial Blood Glucose. Diabetes Care 24(4):775–778.'],
+    ['Wolpert HA et al. (2013): Dietary fat acutely increases glucose concentrations and insulin requirements in patients with type 1 diabetes. Diabetes Care 36(4).'],
+    ['Apotheken Umschau: Kohlenhydrateinheit (KHE/KE), Diabetes-Lexikon.'],
+    ['Fachinformation Insulin aspart Sanofi 100 Einheiten/ml.'],
+    ['diabinfo.de (2025): Übersicht über Insulinpräparate nach Wirkdauer.'],
+    ['Altmeyers Enzyklopädie: Nierenschwelle für Glukose (nach Herold, Innere Medizin 2020).'],
+    ['Richter EA et al. (2004): Exercise signalling to glucose transport in skeletal muscle. Proc Nutr Soc 63(2):211–216.'],
+    ['DiPietro L et al. (2013): Three 15-min bouts of moderate postmeal walking significantly improves 24-h glycemic control in older people at risk for impaired glucose tolerance. Diabetes Care 36(10):3262–3268.'],
+    ['Kassenärztliche Vereinigung Sachsen (2015): Methodik des diagnostischen 75g oGTT (Kriterien nach DDG).'],
+    ['Shah VN et al. (2019): Continuous Glucose Monitoring Profiles in Healthy Nondiabetic Participants. J Clin Endocrinol Metab 104(10):4356–4364.'],
+    ['Battelino T et al. (2019): Clinical Targets for Continuous Glucose Monitoring Data Interpretation: Recommendations From the International Consensus on Time in Range. Diabetes Care 42(8):1593–1603.']
+  ];
+  let quellenGezeigt = false;
+  function renderQuellen() {
+    if (quellenGezeigt) return;
+    const DB = Lebensmittel.DB, vorl = DB.filter(e => /vorläufig|prüfen/i.test(e.quelle || '')).length;
+    const giAtk = DB.filter(e => /^Atkinson/i.test(e.giQuelle || '')).length, giSch = DB.filter(e => /Schätzung/i.test(e.giQuelle || '')).length;
+    const test = selbsttest();
+    const tag = a => '<span class="q-tag ' + a + '">' + ART_TEXT[a] + '</span>';
+    $('#quellenInhalt').innerHTML =
+      '<p class="einleitung-q">Hier steht, woher jede Zahl in GlukoSim kommt: die Werte der Lebensmittel, die Formeln und wie gut das Modell zu den Quellen passt.</p>' +
+      '<h2 class="abschnitt">Passt das Modell zu den Quellen?</h2><div class="q-karte q-test">' + test.map(t =>
+        '<div class="q-test-zeile"><b>' + esc(t.was) + '</b><span class="wert ' + (t.ok ? 'ok' : t.teils ? 'teils' : 'nein') + '">' + esc(t.wert) + (t.ok ? ' ✓' : t.teils ? ' ≈' : ' ✗') + '</span><span class="soll">' + esc(t.soll) + '</span></div>').join('') +
+      '<p class="q-hinweis">Live in der App berechnet, für einen Menschen mit 70 kg.</p></div>' +
+      '<h2 class="abschnitt">Werte</h2><div class="q-zahlen"><div><b>' + DB.length + '</b><span>Lebensmittel in der Tabelle</span></div><div><b>' + giAtk + '</b><span>GI aus den GI-Tabellen</span></div><div><b>' + giSch + '</b><span>GI geschätzt (ähnliches Lebensmittel)</span></div></div>' +
+      '<div class="q-karte"><div class="q-karte-kopf"><h3>Kohlenhydrate, Fett, Eiweiß, Ballaststoffe</h3>' + tag(vorl ? 'richtwert' : 'quelle') + '</div>' +
+      '<p>' + (vorl ? vorl + ' von ' + DB.length + ' Werten sind noch Richtwerte und werden mit dem Bundeslebensmittelschlüssel (BLS 4.0) abgeglichen.' : 'Alle Werte pro 100 g aus dem Bundeslebensmittelschlüssel (BLS 4.0) des Max Rubner-Instituts.') + '</p>' +
+      '<p class="q-von">Datei lebensmittel.csv, eine Zeile pro Lebensmittel mit Quelle</p></div>' +
+      '<div class="q-karte"><div class="q-karte-kopf"><h3>Glykämischer Index</h3>' + tag('quelle') + '</div>' +
+      '<p>Pro Lebensmittel aus Tabelle 1 der internationalen GI-Tabellen der Universität Sydney. Wo ein Lebensmittel dort fehlt, ist der Wert von einem ähnlichen Lebensmittel übernommen und als Schätzung markiert.</p>' +
+      '<p class="q-von">Atkinson, Foster-Powell & Brand-Miller (2008) · Messverfahren nach ISO 26642</p></div>' +
+      '<details class="q-details"><summary>Alle ' + DB.length + ' Lebensmittel mit Quelle ansehen</summary><table class="q-tabelle"><thead><tr><th>Lebensmittel</th><th class="z">KH</th><th class="z">GI</th></tr></thead><tbody>' +
+      DB.map(e => '<tr><td>' + esc(e.name) + '<small>Nährwerte: ' + esc(e.quelle || '–') + '<br>GI: ' + esc(e.giQuelle || '–') + '</small></td><td class="z">' + zahl(e.kh) + ' g</td><td class="z">' + (e.gi || '–') + '</td></tr>').join('') +
+      '</tbody></table></details>' +
+      '<h2 class="abschnitt">Formeln</h2><div class="q-legende">' + tag('quelle') + '<span>Wert direkt aus der Literatur</span></div><div class="q-legende">' + tag('eingestellt') + '<span>Zahl im Modell so gewählt, dass das Ergebnis zur Quelle passt</span></div>' +
+      '<div class="q-legende">' + tag('modell') + '<span>Aufbau des Modells</span></div><div class="q-legende">' + tag('regel') + '<span>von mir festgelegt</span></div>' +
+      formelListe().map(f => '<div class="q-karte"><div class="q-karte-kopf"><h3>' + esc(f.titel) + '</h3>' + tag(f.art) + '</div><div class="q-formel">' + esc(f.formel) + '</div><p>' + esc(f.text) + '</p><p class="q-von">' + esc(f.von) + '</p></div>').join('') +
+      '<h2 class="abschnitt">Grenzen des Modells</h2><ul class="q-grenzen"><li>Ein Durchschnittsmensch mit 70 kg, echte Menschen reagieren sehr unterschiedlich.</li><li>Die eingestellten Zahlen sind an die Quellen angepasst, nicht an Messkurven einzelner Personen.</li><li>Stress, Schlaf, Krankheit und Zyklus fehlen.</li><li>Beim Zuckertest sinkt der Wert bei Gesunden danach etwas unter den Nüchternwert.</li></ul>' +
+      '<h2 class="abschnitt">Literatur</h2><ol class="q-literatur">' + LITERATUR.map(([t, url]) => '<li>' + esc(t) + (url ? ' <a href="' + url + '" target="_blank" rel="noopener">' + esc(url.replace(/^https:\/\//, '').replace(/\/$/, '')) + '</a>' : '') + '</li>').join('') + '</ol>' +
+      '<p class="fuss">Schulprojekt. Vereinfachte Simulation, keine medizinische Beratung.</p>';
+    quellenGezeigt = true;
+  }
 
   // ---------------- Einstellungen ----------------
   function renderEinstellungen() {

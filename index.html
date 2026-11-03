@@ -34,6 +34,7 @@
       <symbol id="i-pfeil" viewBox="0 0 24 24"><path d="M5 12h13m-5-5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-suche" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-quelle" viewBox="0 0 24 24"><path d="M12 6.5C10 5 7.5 4.5 4 4.5v13c3.5 0 6 .5 8 2 2-1.5 4.5-2 8-2v-13c-3.5 0-6 .5-8 2zM12 6.5v13" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
       <symbol id="i-auge" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     </defs>
   </svg>
@@ -97,6 +98,11 @@
         <p class="fuss">Schulprojekt. Vereinfachte Simulation, keine medizinische Beratung.</p>
       </section>
 
+      <!-- ================= QUELLEN ================= -->
+      <section class="seite" data-seite="quellen" id="seite-quellen">
+        <div id="quellenInhalt"></div>
+      </section>
+
       <!-- ================= EINSTELLUNGEN ================= -->
       <section class="seite" data-seite="einstellungen" id="seite-einstellungen">
         <div class="gruppe">
@@ -121,7 +127,7 @@
         <div class="gruppe">
           <h2>Über GlukoSim</h2>
           <p class="klein">Biologie-Schulprojekt. Das Modell bildet Aufnahme aus dem Darm, Insulin, Leber (Glykogen), Glukagon, Muskelarbeit (GLUT4) und die Nierenschwelle vereinfacht nach. Kein Medizinprodukt. Alle Daten bleiben auf diesem Gerät.</p>
-          <p class="klein">Datenquellen: Nährwerte aus der eingebauten Lebensmittel-Liste (Richtwerte pro 100 g). Glykämischer Index nach Atkinson et al., Diabetes Care 2008. Aufnahme aus dem Darm nach dem Zwei-Kammer-Modell von Hovorka et al., Physiol Meas 2004. Grenzwerte nach den Diagnosekriterien der Deutschen Diabetes Gesellschaft.</p>
+          <p class="klein">Woher Formeln und Werte kommen, steht im Tab „Quellen“.</p>
           <p class="klein" id="eVersion"></p>
         </div>
       </section>
@@ -130,6 +136,7 @@
     <nav class="navleiste" id="nav">
       <button data-ziel="plan" class="aktiv"><span class="nav-ico"><svg><use href="#i-plan"/></svg></span><span>Heute</span></button>
       <button data-ziel="vergleich"><span class="nav-ico"><svg><use href="#i-vergleich"/></svg></span><span>Vergleich</span></button>
+      <button data-ziel="quellen"><span class="nav-ico"><svg><use href="#i-quelle"/></svg></span><span>Quellen</span></button>
       <button data-ziel="einstellungen"><span class="nav-ico"><svg><use href="#i-einst"/></svg></span><span>Einstellungen</span></button>
     </nav>
   </div>

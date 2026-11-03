@@ -23,7 +23,7 @@ Danach klickt man sich durch die Schritte des Algorithmus (aktuelle Kurve + gest
 4. **Kleine Ausnahme** – eine Mahlzeit knapp (max. 60 min) außerhalb des Zeitraums, wenn das spürbar hilft
 
 Schritte 3 und 4 erscheinen nur, wenn sie wirklich etwas verbessern. Kein angezeigter Wert wird durch einen Schritt schlechter.
-Die Symbole unter der Kurve lassen sich ziehen. Tabs: **Heute**, **Vergleich** (alle 3 Profile), **Einstellungen**.
+Die Symbole unter der Kurve lassen sich ziehen. Tabs: **Heute**, **Vergleich** (alle 3 Profile), **Quellen** (woher Formeln und Werte kommen, mit Selbsttest des Modells), **Einstellungen**.
 
 Regeln des Algorithmus: mind. 1 h zwischen Mahlzeiten, Reihenfolge Frühstück → Mittag → Abend, kein Sport vor dem Frühstück,
 kein intensiver Sport direkt nach dem Essen, ausgelagert werden nur typische Snacks (Obst, Saft, Süßes, Joghurt).

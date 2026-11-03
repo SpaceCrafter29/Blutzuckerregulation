@@ -291,7 +291,7 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
 .fab.weg { transform: scale(.4); opacity: 0; pointer-events: none; }
 
 .navleiste {
-  display: grid; grid-template-columns: repeat(3, 1fr); background: var(--flaeche);
+  display: grid; grid-template-columns: repeat(4, 1fr); background: var(--flaeche);
   padding: 8px 4px calc(var(--unten) + 10px); min-height: var(--nav-h); z-index: 10;
 }
 .navleiste button { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--text2); }
@@ -404,7 +404,7 @@ input[type="range"] { width: 100%; accent-color: var(--blau); height: 28px; }
 }
 
 /* ================= v3: Assistent & Schritte ================= */
-.navleiste { grid-template-columns: repeat(3, 1fr); }
+.navleiste { grid-template-columns: repeat(4, 1fr); }
 .start-leer { margin: 40px 16px; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 .start-leer h2 { font-size: 22px; }
 
@@ -551,3 +551,43 @@ input[type="range"] { width: 100%; accent-color: var(--blau); height: 28px; }
 .start-karte b { font-size: 17px; margin-bottom: 2px; color: var(--text); }
 .start-liste { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--linie); display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text2); }
 .start-liste b { display: inline; font-size: 12px; font-weight: 600; color: var(--text); margin: 0; }
+
+/* Quellen */
+.einleitung-q { color: var(--text2); font-size: 14px; margin: 4px 0 0; }
+.q-karte { background: var(--flaeche); border-radius: var(--r-mittel); padding: 14px 16px; margin-bottom: 10px; }
+.q-karte-kopf { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.q-karte h3 { font-size: 15px; line-height: 1.3; }
+.q-karte p { margin: 8px 0 0; font-size: 13px; color: var(--text2); line-height: 1.5; }
+.q-karte p.q-von { font-size: 12px; color: var(--text3); }
+.q-formel { font-size: 14px; font-weight: 500; background: var(--bg); border-radius: 10px; padding: 9px 11px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.q-tag { flex: none; display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.q-tag.quelle { background: rgba(91,214,176,0.15); color: var(--mint); }
+.q-tag.eingestellt, .q-tag.richtwert { background: rgba(255,181,71,0.15); color: var(--amber); }
+.q-tag.modell { background: rgba(143,180,255,0.15); color: var(--blau); }
+.q-tag.regel { background: rgba(183,156,255,0.15); color: var(--lila); }
+.q-legende { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+.q-legende + .q-karte, .q-legende:last-of-type { margin-bottom: 12px; }
+.q-test { padding-top: 4px; padding-bottom: 12px; }
+.q-test-zeile { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--linie); }
+.q-test-zeile:first-child { border-top: 0; }
+.q-test-zeile b { font-size: 14px; font-weight: 500; }
+.q-test-zeile .wert { font-size: 15px; font-weight: 600; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.q-test-zeile .wert.ok { color: var(--mint); }
+.q-test-zeile .wert.teils { color: var(--amber); }
+.q-test-zeile .wert.nein { color: var(--rot); }
+.q-test-zeile .soll { grid-column: 1 / -1; font-size: 12px; color: var(--text2); }
+.q-hinweis { margin: 6px 0 0; font-size: 11px; color: var(--text3); }
+.q-zahlen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.q-zahlen div { background: var(--flaeche); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; }
+.q-zahlen b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.q-zahlen span { font-size: 11px; color: var(--text2); line-height: 1.3; }
+.q-details { margin: 2px 0 4px; }
+.q-details summary { cursor: pointer; color: var(--mint); font-weight: 500; font-size: 14px; padding: 8px 0; }
+.q-tabelle { width: 100%; border-collapse: collapse; font-size: 13px; }
+.q-tabelle th { text-align: left; font-size: 11px; font-weight: 500; color: var(--text2); padding: 6px 4px; }
+.q-tabelle td { padding: 8px 4px; border-top: 1px solid var(--linie); vertical-align: top; }
+.q-tabelle .z { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.q-tabelle small { display: block; margin-top: 2px; font-size: 11px; color: var(--text3); line-height: 1.35; }
+.q-grenzen { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text2); display: flex; flex-direction: column; gap: 6px; }
+.q-literatur { margin: 0; padding-left: 22px; font-size: 12px; color: var(--text2); line-height: 1.45; display: flex; flex-direction: column; gap: 8px; }
+.q-literatur a { color: var(--blau); word-break: break-all; }
