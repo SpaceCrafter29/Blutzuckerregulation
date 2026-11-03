@@ -1,467 +1,276 @@
-/* GlukoSim – App-Logik */
+/* GlukoSim v3 – Tagesassistent, Schritte, Vergleich, Einstellungen */
 (function () {
   'use strict';
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const H = Optimierer.hhmm, klon = Optimierer.klon, neueId = Optimierer.neueId, titel = Optimierer.titel;
-  const VERSION = '1.0.2';
-  const SPEICHER = 'glukosim-v1';
-  const SPORTARTEN = [['Spazieren', 'leicht'], ['Radfahren', 'mittel'], ['Joggen', 'mittel'], ['Fußball', 'intensiv'],
-    ['Schwimmen', 'mittel'], ['Krafttraining', 'mittel'], ['Tanzen', 'mittel'], ['Sport', 'mittel']];
+  const VERSION = '3.2.1';
+  const SPEICHER = 'glukosim-v3';
+  const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
   const PROFIL_INFO = {
     gesund: ['Gesund', 'Die Bauchspeicheldrüse regelt das Insulin automatisch.'],
-    typ1: ['Diabetes Typ 1', 'Kein eigenes Insulin. Es muss gespritzt werden.'],
+    typ1: ['Diabetes Typ 1', 'Kein eigenes Insulin. Es wird gespritzt.'],
     typ2: ['Diabetes Typ 2', 'Insulin wirkt schwächer (Insulinresistenz).']
   };
+  const MAHLZEITEN = [['fruehstueck', 'Frühstück', 'z. B. Toast'], ['mittag', 'Mittagessen', 'z. B. Nudeln'], ['abend', 'Abendessen', 'z. B. Reis']];
+  const BEWEGUNG = { Spazieren: 'leicht', Joggen: 'mittel', Radfahren: 'mittel' };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const ico = id => '<svg><use href="#i-' + id + '"/></svg>';
   const vib = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) { /* egal */ } };
   const zuMin = s => { const [h, m] = String(s || '0:0').split(':').map(Number); return Math.max(0, Math.min(1439, (h || 0) * 60 + (m || 0))); };
-  const runde = (x, n) => Math.round(x / n) * n;
+  const heute = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+  const segmentWahl = (el, w) => { for (const b of $$('button', el)) b.setAttribute('aria-checked', b.dataset.wert === w); };
 
   // ---------------- Zustand ----------------
   const STANDARD = {
-    version: 1, profil: 'gesund', gewicht: 70, apiKey: '', modell: 'gemini-flash-latest',
-    eintraege: [], vorlagen: [], insulinZeigen: false, vInsulinZeigen: false, onboarding: false,
-    demoUnveraendert: false, insulinBeiTyp2: false, zoom: 1, vZoom: 0, vAus: {}
+    profil: 'gesund', gewicht: 70, insulinAuto: true,
+    tag: '', mahlzeiten: [], bewegung: [], sportZeitraum: [900, 1230], schritte: [], nichtNoetig: [], schrittIndex: 0,
+    insulinZeigen: false, vInsulinZeigen: false, vAus: {}, zoom: 0, vZoom: 0
   };
-  const zustand = Object.assign({}, STANDARD, (() => { try { return JSON.parse(localStorage.getItem(SPEICHER)) || {}; } catch (e) { return {}; } })());
-  let speicherTimer = null;
-  function speichern() {
-    clearTimeout(speicherTimer);
-    speicherTimer = setTimeout(() => {
-      try { localStorage.setItem(SPEICHER, JSON.stringify(zustand)); } catch (e) { toast('Speichern fehlgeschlagen – Speicher voll?'); }
-    }, 120);
+  const z = Object.assign({}, STANDARD, (() => { try { return JSON.parse(localStorage.getItem(SPEICHER)) || {}; } catch (e) { return {}; } })());
+  delete z.apiKey; delete z.modell;
+  try { localStorage.removeItem('glukosim-ki-cache'); } catch (e) { /* egal */ }
+  const speichern = () => { try { localStorage.setItem(SPEICHER, JSON.stringify(z)); } catch (e) { toast('Speichern fehlgeschlagen'); } };
+  const opt = () => ({ gewicht: z.gewicht, autoInsulin: z.insulinAuto });
+  const schritt = () => z.schritte[z.schrittIndex] || null;
+  const plan = () => (schritt() ? schritt().plan : []);
+
+  let sim = null, st = null, simVorher = null, erklaerung = null, vErklaerung = null, version = 0;
+  let seite = 'plan', planChart = null, vChart = null, installEvent = null;
+
+  function berechneSchritte() {
+    const s = Optimierer.planeSchritte(z.mahlzeiten, z.bewegung, z.profil, opt(), z.sportZeitraum);
+    z.nichtNoetig = s.nichtNoetig || [];
+    z.schritte = s.map(x => ({ key: x.key, titel: x.titel, text: x.text, plan: x.plan, aenderungen: x.aenderungen || [] }));
+    z.schrittIndex = 0;
   }
+  function neuBerechnet() { version++; erklaerung = null; vErklaerung = null; speichern(); renderPlan(); }
 
-  // Laufzeit
-  let sim = null, st = null, vorschau = null, vorschlaege = null, erklaerung = null, vErklaerung = null;
-  let planVersion = 0, seite = 'plan', planChart = null, vChart = null, installEvent = null;
-  const simOpt = () => ({ gewicht: zustand.gewicht, insulinBeiTyp2: zustand.insulinBeiTyp2 });
-
-  function geaendert() {
-    zustand.demoUnveraendert = false;
-    planVersion++; vorschau = null; vorschlaege = null; erklaerung = null; vErklaerung = null;
-    speichern(); renderPlan();
-  }
-
-  // ---------------- Toast ----------------
+  // ---------------- Hilfen ----------------
   let toastTimer;
-  function toast(msg) {
-    const t = $('#toast'); t.textContent = msg; t.classList.add('zeigen');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('zeigen'), 3200);
-  }
-
-  // ---------------- Mini-Markdown ----------------
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('zeigen'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('zeigen'), 3400); }
   function md(text) {
-    const bloecke = String(text || '').replace(/\r/g, '').split(/\n{2,}/);
-    return bloecke.map(b => {
-      const zeilen = b.split('\n').filter(z => z.trim());
-      const fmt = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-      if (zeilen.length && zeilen.every(z => /^\s*[-*•]\s+/.test(z)))
-        return '<ul>' + zeilen.map(z => '<li>' + fmt(z.replace(/^\s*[-*•]\s+/, '')) + '</li>').join('') + '</ul>';
-      return '<p>' + zeilen.map(z => fmt(z.replace(/^#+\s*/, ''))).join('<br>') + '</p>';
+    return String(text || '').split(/\n{2,}/).map(b => {
+      const zl = b.split('\n').filter(x => x.trim()), f = x => esc(x).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      if (zl.length && zl.every(x => /^\s*[-*•]\s+/.test(x))) return '<ul>' + zl.map(x => '<li>' + f(x.replace(/^\s*[-*•]\s+/, '')) + '</li>').join('') + '</ul>';
+      return '<p>' + zl.map(x => f(x.replace(/^#+\s*/, ''))).join('<br>') + '</p>';
     }).join('');
   }
+  const therapie = p => (p === 'typ1' && z.insulinAuto ? GlukoSim.standardTherapie(p === 'typ1' ? plan() : []) : []);
 
-  // ---------------- Plan: Berechnung & Anzeige ----------------
-  function berechne() {
-    sim = GlukoSim.simuliere(zustand.eintraege, zustand.profil, simOpt());
-    st = GlukoSim.statistik(sim, zustand.profil);
-  }
-
-  function marker(eintraege, profil) {
-    const m = [];
-    for (const e of eintraege) {
-      if (e.typ === 'sport') m.push({ t: e.zeit, breite: e.dauer || 30, farbe: 'rgba(123,167,212,0.10)' });
-      else if (e.typ === 'essen') m.push({ t: e.zeit, farbe: 'rgba(250,249,245,0.16)' });
-      else if (profil === 'typ1') m.push({ t: e.zeit, farbe: 'rgba(181,166,232,0.2)' });
-    }
-    return m;
-  }
-
+  // ---------------- Plan ----------------
   function renderKurve() {
-    berechne();
-    const P = GlukoSim.PROFILE[zustand.profil];
+    const P = GlukoSim.PROFILE[z.profil];
+    sim = GlukoSim.simuliere(plan(), z.profil, opt());
+    st = GlukoSim.statistik(sim, z.profil);
+    const vor = z.schritte[z.schrittIndex - 1];
+    simVorher = vor ? GlukoSim.simuliere(vor.plan, z.profil, opt()) : null;
     const serien = [{ G: sim.G }];
-    if (vorschau) serien.push({ G: vorschau.sim.G, gestrichelt: true, farbe: 'rgba(250,249,245,0.9)' });
-    planChart.setDaten({ serien, insulin: zustand.insulinZeigen ? [{ I: sim.I }] : [], ziel: P.ziel, marker: marker(zustand.eintraege, zustand.profil) });
+    if (simVorher) serien.push({ G: simVorher.G, gestrichelt: true, farbe: 'rgba(233,237,248,0.55)' });
+    const marker = plan().map(e => e.typ === 'sport' ? { t: e.zeit, breite: e.dauer, farbe: 'rgba(143,180,255,0.08)' } : { t: e.zeit, farbe: 'rgba(233,237,248,0.16)' })
+      .concat(therapie(z.profil).filter(i => i.art === 'schnell').map(i => ({ t: i.zeit, farbe: 'rgba(183,156,255,0.35)' })));
+    planChart.setDaten({ serien, insulin: z.insulinZeigen ? [{ I: sim.I }] : [], ziel: P.ziel, marker });
     renderReadout(); renderStats();
   }
 
   function renderPlan() {
-    renderKurve();
-    renderSpuren(); renderListe(); renderErklaerung(); renderVorschlaege();
-    const chip = $('#profilChip'); chip.dataset.profil = zustand.profil;
-    $('#profilName').textContent = GlukoSim.PROFILE[zustand.profil].name;
-    $('#t1Banner').hidden = !(zustand.profil === 'typ1' && zustand.eintraege.some(e => e.typ === 'essen') && !zustand.eintraege.some(e => e.typ === 'insulin'));
-    $('#tInsulin').setAttribute('aria-pressed', zustand.insulinZeigen);
+    const hatPlan = z.schritte.length > 0;
+    $('#startLeer').hidden = hatPlan; $('#planInhalt').hidden = !hatPlan;
+    $('#profilChip').dataset.profil = z.profil;
+    $('#profilName').textContent = GlukoSim.PROFILE[z.profil].name;
+    if (!hatPlan) return;
+    renderKurve(); renderSpuren(); renderSchritte(); renderListe(); renderErklaerung();
+    $('#tInsulin').setAttribute('aria-pressed', z.insulinZeigen);
     if (seite === 'vergleich') renderVergleich();
   }
 
-  function zone(g, ziel) {
-    if (g < ziel[0]) return 'tief';
-    if (g > 250) return 'sehrhoch';
-    if (g > ziel[1]) return 'hoch';
-    return 'ok';
-  }
-
+  function zone(g, ziel) { return g < ziel[0] ? 'tief' : g > 250 ? 'sehrhoch' : g > ziel[1] ? 'hoch' : 'ok'; }
   function renderReadout() {
-    const ziel = GlukoSim.PROFILE[zustand.profil].ziel;
-    const kreuz = planChart.kreuz;
-    const t = kreuz != null ? kreuz : st.maxT;
-    const g = sim.G[t];
-    const a = Math.max(0, t - 10), b = Math.min(1440, t + 10);
-    const steigung = (sim.G[b] - sim.G[a]) / (b - a || 1);
-    const winkel = steigung > 2 ? -90 : steigung > 0.8 ? -45 : steigung < -2 ? 90 : steigung < -0.8 ? 45 : 0;
+    const ziel = GlukoSim.PROFILE[z.profil].ziel, kreuz = planChart.kreuz, t = kreuz != null ? kreuz : st.maxT, g = sim.G[t];
+    const a = Math.max(0, t - 10), b = Math.min(1440, t + 10), s = (sim.G[b] - sim.G[a]) / (b - a || 1);
     $('#readout').dataset.zone = zone(g, ziel);
     $('#roWert').textContent = Math.round(g);
-    $('#roPfeil').style.transform = 'rotate(' + winkel + 'deg)';
+    $('#roPfeil').style.transform = 'rotate(' + (s > 2 ? -90 : s > 0.8 ? -45 : s < -2 ? 90 : s < -0.8 ? 45 : 0) + 'deg)';
     $('#roZeit').textContent = kreuz != null ? 'um ' + H(t) + ' Uhr' : 'Höchster Wert, ' + H(t) + ' Uhr';
-    $('#roInsulin').textContent = zustand.insulinZeigen ? 'Insulin ' + Math.round(sim.I[t]) + ' µU/ml' : '';
+    $('#roInsulin').textContent = z.insulinZeigen ? 'Insulin ' + Math.round(sim.I[t]) + ' µU/ml' : '';
   }
-
   function renderStats() {
     const [lo, hi] = st.ziel;
-    const k = (v, gut, mittel) => v <= gut ? 'ok' : v <= mittel ? 'warn' : 'schlecht';
-    const tiles = [
+    const t = [
       ['Spitze', st.max + '<small>mg/dl</small>', 'um ' + H(st.maxT), st.max > hi + 70 ? 'schlecht' : st.max > hi ? 'warn' : 'ok'],
       ['Mittelwert', st.mittel + '<small>mg/dl</small>', 'über 24 h', st.mittel > hi ? 'schlecht' : st.mittel > hi - 25 ? 'warn' : 'ok'],
       ['Im Ziel', st.zielProzent + '<small>%</small>', lo + '–' + hi + ' mg/dl', st.zielProzent >= 90 ? 'ok' : st.zielProzent >= 70 ? 'warn' : 'schlecht'],
-      ['Unterzucker', st.unterMin + '<small>min</small>', 'unter ' + lo, k(st.unterMin, 0, 30)]
+      ['Unterzucker', st.unterMin + '<small>min</small>', 'unter ' + lo, st.unterMin ? 'schlecht' : 'ok']
     ];
-    $('#planStats').innerHTML = tiles.map(t => '<div class="stat"><div class="stat-label">' + t[0] + '</div><div class="stat-wert ' + t[3] + '">' + t[1] + '</div><div class="stat-sub">' + t[2] + '</div></div>').join('');
+    $('#planStats').innerHTML = t.map(x => '<div class="stat"><div class="stat-label">' + x[0] + '</div><div class="stat-wert ' + x[3] + '">' + x[1] + '</div><div class="stat-sub">' + x[2] + '</div></div>').join('');
   }
 
-  // ---------------- Spuren & Drag & Drop ----------------
-  function spurListe() { return zustand.profil === 'typ1' ? ['essen', 'sport', 'insulin'] : ['essen', 'sport']; }
+  // ---------------- Schritte zum Durchklicken ----------------
+  function renderSchritte() {
+    const n = z.schritte.length, i = z.schrittIndex, s = schritt();
+    let punkte = '';
+    for (let k = 0; k < n; k++) {
+      if (k) punkte += '<i class="' + (k <= i ? 'fertig' : '') + '"></i>';
+      punkte += '<button data-schritt="' + k + '" class="' + (k === i ? 'aktiv' : k < i ? 'fertig' : '') + '" aria-label="Schritt ' + (k + 1) + ': ' + esc(z.schritte[k].titel) + '">' + (k + 1) + '</button>';
+    }
+    let werte = '';
+    if (simVorher) {
+      const a = GlukoSim.statistik(simVorher, z.profil), w = (l, x, y, u, besser) => '<div><span>' + l + '</span><b class="' + (besser ? 'ok' : '') + '">' + x + ' → ' + y + '</b></div>';
+      werte = '<div class="schritt-werte">' + w('Spitze (mg/dl)', a.max, st.max, '', st.max < a.max) + w('Im Ziel (%)', a.zielProzent, st.zielProzent, '', st.zielProzent > a.zielProzent) +
+        (a.unterMin || st.unterMin ? w('Unterzucker (min)', a.unterMin, st.unterMin, '', st.unterMin < a.unterMin) : w('Zu hoch (min)', a.ueberMin, st.ueberMin, '', st.ueberMin < a.ueberMin)) + '</div>';
+    }
+    const liste = s.aenderungen.length ? '<ul class="schritt-liste">' + s.aenderungen.map(a => '<li><span>' + esc(a.titel) + (a.text && s.key === 'snack' ? ': ' + esc(a.text) : '') + '</span><span>' + (a.von != null ? H(a.von) + ' → ' : '') + H(a.nach) + '</span></li>').join('') + '</ul>' : '';
+    const weiter = i < n - 1 ? '<button class="btn primaer" data-nav="1">Weiter: ' + esc(z.schritte[i + 1].titel) + '</button>' : '<button class="btn primaer" data-nav="erklaeren">Diesen Tag erklären</button>';
+    $('#schritte').innerHTML = '<div class="schritt-karte"><div class="schritt-punkte">' + punkte + '</div>' +
+      '<span class="schritt-nr">Schritt ' + (i + 1) + ' von ' + n + '</span><h3>' + esc(s.titel) + '</h3>' +
+      (s.angepasst ? '<p class="angepasst">Von dir angepasst</p>' : '') +
+      '<p>' + esc(s.text) + '</p>' + liste + werte +
+      '<div class="schritt-nav"><button class="btn tonal" data-nav="-1"' + (i === 0 ? ' disabled' : '') + '>Zurück</button>' + weiter + '</div>' +
+      (i === n - 1 && z.nichtNoetig.length ? '<p class="schritt-fertig">Nicht nötig: ' + esc(z.nichtNoetig.join(', ')) + '. Das bringt bei diesem Tag keine spürbare Verbesserung.</p>' : '') + '</div>';
+  }
+  function geheZuSchritt(k) {
+    z.schrittIndex = Math.max(0, Math.min(z.schritte.length - 1, k));
+    planChart.kreuz = null; erklaerung = null; speichern(); renderPlan(); vib(8);
+  }
+  $('#schritte').addEventListener('click', ev => {
+    const p = ev.target.closest('[data-schritt]'); if (p) { geheZuSchritt(+p.dataset.schritt); return; }
+    const b = ev.target.closest('[data-nav]'); if (!b) return;
+    if (b.dataset.nav === 'erklaeren') { erklaeren(); return; }
+    geheZuSchritt(z.schrittIndex + (+b.dataset.nav));
+  });
 
+  // ---------------- Blöcke unter der Kurve ----------------
   function renderSpuren() {
-    const spuren = spurListe();
-    planChart.setSpuren(spuren.length);
+    planChart.setSpuren(2);
     const box = planChart.spuren;
-    box.innerHTML = spuren.map((s, i) => '<div class="spur" style="top:' + (i * 36) + 'px"></div>').join('');
-    for (const e of zustand.eintraege) {
-      const i = spuren.indexOf(e.typ);
-      if (i < 0) continue;
+    box.innerHTML = '<div class="spur" style="top:0"></div><div class="spur" style="top:36px"></div>';
+    for (const e of plan()) {
       const c = document.createElement('div');
-      c.className = 'chip chip-' + e.typ;
-      c.dataset.id = e.id;
-      c.tabIndex = 0;
-      c.setAttribute('role', 'button');
+      c.className = 'chip chip-' + e.typ + (e.mahlzeit === 'snack' ? ' snack' : '') + (e.ausnahme ? ' ausnahme' : '');
+      c.dataset.id = e.id; c.tabIndex = 0; c.setAttribute('role', 'button');
       c.setAttribute('aria-label', titel(e) + ' um ' + H(e.zeit) + ', ziehen zum Verschieben');
-      c.style.top = (i * 36 + 4) + 'px';
-      const label = e.typ === 'essen' ? titel(e) : e.typ === 'sport' ? e.art + ' ' + e.dauer + '′' : e.einheiten + ' IE' + (e.art === 'lang' ? ' lang' : '');
-      c.innerHTML = '<span class="chip-ico">' + ico(e.typ === 'essen' ? 'essen' : e.typ) + '</span><span class="chip-txt">' + esc(label) + '</span><span class="chip-zeit">' + H(e.zeit) + '</span>';
+      c.style.top = (e.typ === 'sport' ? 40 : 4) + 'px';
+      const label = e.typ === 'sport' ? e.art + ' ' + e.dauer + '′' : titel(e);
+      c.innerHTML = '<span class="chip-ico">' + ico(e.typ === 'sport' ? 'sport' : e.mahlzeit === 'snack' ? 'snack' : 'essen') + '</span><span class="chip-txt">' + esc(label) + '</span><span class="chip-zeit">' + H(e.zeit) + '</span>';
       box.appendChild(c);
       ziehbar(c, e);
     }
     positioniereChips();
   }
-
   function positioniereChip(c, e) {
     const px = planChart.pxProMin;
-    if (e.typ === 'sport') {
-      c.style.left = (e.zeit * px) + 'px';
-      c.style.minWidth = Math.max(28, (e.dauer || 30) * px) + 'px';
-      c.style.maxWidth = 'none';
-    } else c.style.left = (e.zeit * px - 14) + 'px';
+    if (e.typ === 'sport') { c.style.left = (e.zeit * px) + 'px'; c.style.minWidth = Math.max(28, e.dauer * px) + 'px'; c.style.maxWidth = 'none'; }
+    else c.style.left = (e.zeit * px - 14) + 'px';
   }
-
   function positioniereChips() {
     if (!planChart) return;
     planChart.spuren.classList.toggle('kompakt', planChart.pxProStunde < 30);
-    for (const c of $$('.chip', planChart.spuren)) {
-      const e = zustand.eintraege.find(x => x.id === c.dataset.id);
-      if (e) positioniereChip(c, e);
-    }
-    $('#zoomAus').disabled = planChart.zoomIndex === 0;
-    $('#zoomEin').disabled = planChart.zoomIndex === 2;
+    for (const c of $$('.chip', planChart.spuren)) { const e = plan().find(x => x.id === c.dataset.id); if (e) positioniereChip(c, e); }
+    $('#zoomAus').disabled = planChart.zoomIndex === 0; $('#zoomEin').disabled = planChart.zoomIndex === 2;
   }
-
   function ziehbar(chip, e) {
     let d = null;
-    chip.addEventListener('pointerdown', ev => {
-      if (ev.button > 0) return;
-      chip.setPointerCapture(ev.pointerId);
-      d = { x: ev.clientX, zeit: e.zeit, offset: 0, bewegt: false, letztesX: ev.clientX, raf: 0 };
-    });
-    const neueZeit = () => {
-      const schritt = planChart.zoomIndex === 0 ? 15 : 5;
-      const t = d.zeit + (d.letztesX - d.x + d.offset) / planChart.pxProMin;
-      return Math.max(0, Math.min(1440 - (e.typ === 'sport' ? e.dauer : 5), runde(t, schritt)));
-    };
-    const anwenden = () => {
-      const t = neueZeit();
-      if (t !== e.zeit) {
-        e.zeit = t;
-        positioniereChip(chip, e);
-        $('.chip-zeit', chip).textContent = H(t);
-        if (t % 60 === 0) vib(4);
-        renderKurve();
-      }
-    };
-    const autoScroll = () => {
-      if (!d || !d.bewegt) return;
-      const sc = planChart.scroller, r = sc.getBoundingClientRect();
-      let v = 0;
-      if (d.letztesX > r.right - 40) v = 9; else if (d.letztesX < r.left + 40) v = -9;
-      if (v) { const vor = sc.scrollLeft; sc.scrollLeft += v; d.offset += sc.scrollLeft - vor; anwenden(); }
-      d.raf = requestAnimationFrame(autoScroll);
-    };
+    chip.addEventListener('pointerdown', ev => { if (ev.button > 0) return; chip.setPointerCapture(ev.pointerId); d = { x: ev.clientX, zeit: e.zeit, bewegt: false }; });
     chip.addEventListener('pointermove', ev => {
       if (!d) return;
-      d.letztesX = ev.clientX;
-      if (!d.bewegt && Math.abs(ev.clientX - d.x) > 6) {
-        d.bewegt = true; chip.classList.add('zieht'); vib(12);
-        planChart.kreuz = null;
-        if (vorschau) { vorschau = null; renderVorschlaege(); }
-        d.raf = requestAnimationFrame(autoScroll);
-      }
-      if (d.bewegt) anwenden();
+      if (!d.bewegt && Math.abs(ev.clientX - d.x) > 6) { d.bewegt = true; chip.classList.add('zieht'); vib(12); planChart.kreuz = null; }
+      if (!d.bewegt) return;
+      const schrittMin = planChart.zoomIndex === 0 ? 15 : 5;
+      const t = Math.max(0, Math.min(1440 - (e.typ === 'sport' ? e.dauer : 5), Math.round((d.zeit + (ev.clientX - d.x) / planChart.pxProMin) / schrittMin) * schrittMin));
+      if (t !== e.zeit) { e.zeit = t; positioniereChip(chip, e); $('.chip-zeit', chip).textContent = H(t); renderKurve(); }
     });
     const ende = () => {
       if (!d) return;
-      cancelAnimationFrame(d.raf);
-      const warBewegt = d.bewegt;
-      d = null;
-      chip.classList.remove('zieht');
-      if (warBewegt) { vib(8); geaendert(); }
-      else oeffneEintrag(e);
+      const bewegt = d.bewegt; d = null; chip.classList.remove('zieht');
+      if (bewegt) { vib(8); schritt().angepasst = true; neuBerechnet(); }
+      else toast(titel(e) + ' um ' + H(e.zeit) + ' Uhr. Zum Verschieben ziehen.');
     };
     chip.addEventListener('pointerup', ende);
-    chip.addEventListener('pointercancel', () => { if (d) { cancelAnimationFrame(d.raf); d = null; chip.classList.remove('zieht'); renderPlan(); } });
-    chip.addEventListener('keydown', ev => {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); oeffneEintrag(e); }
-      if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
-        ev.preventDefault(); e.zeit = Math.max(0, Math.min(1435, e.zeit + (ev.key === 'ArrowLeft' ? -15 : 15))); geaendert();
-        const neu = $('.chip[data-id="' + e.id + '"]', planChart.spuren); neu && neu.focus();
-      }
-    });
+    chip.addEventListener('pointercancel', ende);
   }
 
   // ---------------- Liste ----------------
-  function untertitel(e) {
-    if (e.typ === 'essen') return Math.round(e.summe.kh) + ' g Kohlenhydrate, GI ' + e.summe.gi;
-    if (e.typ === 'sport') return e.dauer + ' min, ' + e.intensitaet;
-    return (e.art === 'lang' ? 'Lang wirkend' : 'Schnell wirkend') + (zustand.profil !== 'typ1' && !(zustand.profil === 'typ2' && zustand.insulinBeiTyp2) ? ', wirkt nur bei Typ 1' : '');
-  }
-
   function renderListe() {
-    const ul = $('#eintragListe');
-    const liste = zustand.eintraege.slice().sort((a, b) => a.zeit - b.zeit);
-    if (!liste.length) {
-      ul.innerHTML = '<li class="leer">Noch nichts eingetragen. Tippe auf + und füge eine Mahlzeit hinzu.<br><button class="btn tonal klein" data-aktion="demo">Beispieltag laden</button></li>';
-      return;
-    }
-    const aktivInsulin = zustand.profil === 'typ1' || (zustand.profil === 'typ2' && zustand.insulinBeiTyp2);
-    ul.innerHTML = liste.map(e => '<li class="eintrag ' + e.typ + (e.typ === 'insulin' && !aktivInsulin ? ' inaktiv' : '') + '" data-id="' + e.id + '" tabindex="0" role="button">' +
-      '<span class="zeit">' + H(e.zeit) + '</span><span class="ico">' + ico(e.typ === 'essen' ? 'essen' : e.typ) + '</span>' +
-      '<span class="txt"><div class="t1">' + esc(titel(e)) + '</div><div class="t2">' + esc(untertitel(e)) + '</div></span></li>').join('');
+    const ins = Object.fromEntries(therapie(z.profil).filter(i => i.zu).map(i => [i.zu, i.einheiten]));
+    $('#eintragListe').innerHTML = plan().slice().sort((a, b) => a.zeit - b.zeit).map(e => {
+      const sport = e.typ === 'sport', snack = e.mahlzeit === 'snack';
+      const t2 = sport ? e.dauer + ' min, ' + e.intensitaet : esc(e.eingabe || '');
+      let t3 = sport ? '' : Math.round(e.summe.kh) + ' g Kohlenhydrate, GI ' + e.summe.gi;
+      if (!sport && ins[e.id]) t3 += ', dazu ' + ins[e.id] + ' IE Insulin';
+      if (e.fest) t3 += sport ? '' : ', feste Uhrzeit';
+      if (e.ausnahme) t3 += ', außerhalb deines Zeitraums';
+      if (snack) t3 += ', vom Algorithmus vorgeschlagen';
+      return '<li class="eintrag ' + (sport ? 'sport' : 'essen') + '"><span class="zeit">' + H(e.zeit) + '</span><span class="ico">' + ico(sport ? 'sport' : snack ? 'snack' : 'essen') + '</span>' +
+        '<span class="txt"><div class="t1">' + esc(titel(e)) + '</div><div class="t2">' + t2 + '</div>' + (t3 ? '<div class="t2" style="color:var(--text3)">' + esc(t3) + '</div>' : '') + '</span></li>';
+    }).join('');
   }
 
   // ---------------- Erklärung ----------------
-  const LAED = '<div class="laedt" aria-label="Wird erstellt"><span></span><span></span><span></span></div>';
-  function erklaerHTML(e) {
-    if (!e) return '';
-    if (e.laden) return LAED;
-    return '<div class="erklaerung">' + md(e.text) + '<div class="quelle">' + ico('funke') + esc(e.quelle) + '</div></div>';
-  }
+  const LAED = '<div class="laedt"><span></span><span></span><span></span></div>';
+  const erklaerHTML = e => !e ? '' : e.laden ? LAED : '<div class="erklaerung">' + md(e.text) + '<div class="quelle">' + ico('funke') + esc(e.quelle) + '</div></div>';
   function renderErklaerung() { $('#erklaerBox').innerHTML = erklaerHTML(erklaerung); }
-
-  async function erklaeren() {
-    if (!zustand.eintraege.length) { toast('Trage zuerst etwas in den Tag ein.'); return; }
-    const p = zustand.profil;
-    if (zustand.demoUnveraendert && Demo.texte[p]) {
-      erklaerung = { text: Demo.texte[p], quelle: 'Beispieltag, vorab mit KI erstellt' };
-      renderErklaerung(); return;
-    }
-    const lokal = Texte.lokaleErklaerung(zustand.eintraege, p, sim, st);
-    if (!zustand.apiKey) {
-      erklaerung = { text: lokal, quelle: 'Automatisch aus dem Modell. Mit Gemini-API-Key wird die Erklärung ausführlicher.' };
-      renderErklaerung(); return;
-    }
-    const version = planVersion;
-    erklaerung = { laden: true }; renderErklaerung();
-    try {
-      const text = await KI.erklaere(Texte.zusammenfassung(zustand.eintraege, p, sim, st), zustand);
-      if (version !== planVersion || p !== zustand.profil) return;
-      erklaerung = { text, quelle: 'Erklärt von Gemini' };
-    } catch (e) {
-      if (version !== planVersion) return;
-      erklaerung = { text: lokal, quelle: e.message + ' Stattdessen automatische Erklärung aus dem Modell.' };
-    }
+  function erklaeren() {
+    if (!plan().length) return;
+    const p = z.profil, mitIns = plan().concat(therapie(p)), stP = GlukoSim.statistik(sim, p);
+    erklaerung = { text: Texte.lokaleErklaerung(mitIns, p, sim, stP), quelle: 'Automatisch aus den Werten der Simulation erstellt' };
     renderErklaerung();
+    $('#erklaerBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-
-  // ---------------- Vorschläge ----------------
-  function renderVorschlaege() {
-    const box = $('#vorschlagBox');
-    if (!vorschlaege) { box.innerHTML = ''; return; }
-    let html = '<div class="vorschlaege">';
-    if (!vorschlaege.liste.length && !vorschlaege.laedt)
-      html += '<p class="leer-hinweis">Das Modell findet keine spürbare Verbesserung. Der Tag liegt schon gut im Zielbereich.</p>';
-    for (const v of vorschlaege.liste) {
-      const ef = Optimierer.effektText(v.effekt);
-      const aktiv = vorschau && vorschau.id === v.id;
-      html += '<article class="vorschlag' + (aktiv ? ' vorschau' : '') + '" data-id="' + v.id + '"><h3>' + esc(v.titel) + '</h3><p>' + esc(v.text) + '</p>' +
-        (ef.length ? '<div class="effekte">' + ef.map(t => '<span class="effekt' + (t.includes('+') ? ' schlecht' : '') + '">' + esc(t) + '</span>').join('') + '</div>' : '') +
-        '<div class="knoepfe"><button class="btn tonal klein" data-aktion="vorschau" aria-pressed="' + aktiv + '">' + (aktiv ? 'Vorschau aus' : 'Vorschau') + '</button>' +
-        '<button class="btn primaer klein" data-aktion="uebernehmen">Übernehmen</button><span class="herkunft">' + (v.quelle === 'ki' ? 'Gemini' : 'Modell') + '</span></div></article>';
-    }
-    if (vorschlaege.laedt) html += '<div class="laedt"><span></span><span></span></div>';
-    if (vorschlaege.fehler) html += '<p class="klein">' + esc(vorschlaege.fehler) + '</p>';
-    box.innerHTML = html + '</div>';
-  }
-
-  async function optimieren() {
-    if (!zustand.eintraege.some(e => e.typ === 'essen')) { toast('Trage zuerst eine Mahlzeit ein.'); return; }
-    const p = zustand.profil, version = planVersion;
-    const res = Optimierer.vorschlaege(zustand.eintraege, p, simOpt());
-    vorschau = null;
-    vorschlaege = { liste: res.vorschlaege, laedt: !!zustand.apiKey };
-    renderKurve(); renderVorschlaege();
-    $('#vorschlagBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    if (!zustand.apiKey) return;
-    try {
-      const ki = await KI.tauschVorschlaege(Texte.planText(zustand.eintraege, p) + '\nStoffwechsel: ' + Texte.PROFIL_TEXT[p], zustand);
-      if (version !== planVersion || p !== zustand.profil) return;
-      const basis = res.basis;
-      for (const v of ki) {
-        const alt = zustand.eintraege.find(e => e.id === v.eintragId && e.typ === 'essen');
-        if (!alt) continue;
-        const plan = klon(zustand.eintraege), ziel = plan.find(e => e.id === alt.id);
-        ziel.zutaten = v.mahlzeit.zutaten; ziel.summe = Lebensmittel.summe(v.mahlzeit.zutaten);
-        ziel.name = v.mahlzeit.name || ziel.name; ziel.quelle = 'Gemini';
-        const s2 = GlukoSim.simuliere(plan, p, simOpt()), st2 = GlukoSim.statistik(s2, p);
-        const fenster = G => { let m = 0; for (let t = alt.zeit; t <= Math.min(1440, alt.zeit + 180); t++) m = Math.max(m, G[t]); return m; };
-        const effekt = { score: basis.score - GlukoSim.bewertung(s2, p), spitze: st2.max - basis.st.max, ueber: st2.ueberMin - basis.st.ueberMin, unter: st2.unterMin - basis.st.unterMin, ziel: st2.zielProzent - basis.st.zielProzent,
-          danach: Math.round(fenster(s2.G) - fenster(basis.sim.G)), nachName: titel(alt) };
-        if (effekt.unter > 0 || effekt.ueber > 0 || effekt.spitze > 0 || (effekt.score <= 0 && effekt.danach > -3)) continue;
-        vorschlaege.liste.push({ id: neueId(), quelle: 'ki', titel: v.titel, text: v.text + ' Neu: ' + v.mahlzeit.zutaten.map(z => z.name + ' ' + z.gramm + ' g').join(', ') + '.', effekt, plan, sim: s2 });
-      }
-    } catch (e) {
-      vorschlaege.fehler = 'Gemini-Vorschläge nicht verfügbar: ' + e.message;
-    }
-    vorschlaege.laedt = false;
-    renderVorschlaege();
-  }
-
-  $('#vorschlagBox').addEventListener('click', ev => {
-    const b = ev.target.closest('button[data-aktion]'); if (!b) return;
-    const v = vorschlaege && vorschlaege.liste.find(x => x.id === b.closest('.vorschlag').dataset.id); if (!v) return;
-    if (b.dataset.aktion === 'vorschau') {
-      vorschau = vorschau && vorschau.id === v.id ? null : v;
-      renderKurve(); renderVorschlaege();
-      if (vorschau) $('#seite-plan').scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      zustand.eintraege = klon(v.plan);
-      vib(15); geaendert(); toast('Vorschlag übernommen');
-      $('#seite-plan').scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  });
 
   // ---------------- Vergleich ----------------
-  const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
+  let vErg = null;
   function vergleichErgebnisse() {
-    const e = zustand.eintraege;
-    const hatInsulin = e.some(x => x.typ === 'insulin');
-    const t1Plan = hatInsulin ? e : e.concat(Optimierer.autoInsulin(e));
     const r = {};
-    for (const p of PROFILE_LISTE) {
-      const s = GlukoSim.simuliere(p === 'typ1' ? t1Plan : e, p, simOpt());
-      r[p] = { sim: s, st: GlukoSim.statistik(s, 'gesund'), autoInsulin: p === 'typ1' && !hatInsulin };
-    }
+    for (const p of PROFILE_LISTE) { const s = GlukoSim.simuliere(plan(), p, opt()); r[p] = { sim: s, st: GlukoSim.statistik(s, 'gesund'), ohneInsulin: !z.insulinAuto }; }
     return r;
   }
-
-  let vErg = null;
   function renderVergleich() {
+    if (!plan().length) { $('#vTabelle').innerHTML = ''; $('#vLegende').innerHTML = ''; $('#vHinweis').textContent = 'Plane zuerst einen Tag.'; vChart.setDaten({ serien: [], insulin: [], marker: [] }); return; }
     vErg = vergleichErgebnisse();
-    const aus = zustand.vAus || {};
-    const serien = [], insulin = [];
+    const aus = z.vAus || {}, serien = [], insulin = [];
     for (const p of PROFILE_LISTE) {
       if (aus[p]) continue;
       const f = GlukoSim.PROFILE[p].farbe;
       serien.push({ G: vErg[p].sim.G, farbe: f });
-      if (zustand.vInsulinZeigen) insulin.push({ I: vErg[p].sim.I, farbe: f, fuellung: f + '1f' });
+      if (z.vInsulinZeigen) insulin.push({ I: vErg[p].sim.I, farbe: f, fuellung: f + '1f' });
     }
-    vChart.setDaten({ serien, insulin, ziel: [70, 140], marker: marker(zustand.eintraege, 'gesund'), spitzeZeigen: false });
+    vChart.setDaten({ serien, insulin, ziel: [70, 140], marker: plan().map(e => ({ t: e.zeit, farbe: 'rgba(233,237,248,0.14)' })), spitzeZeigen: false });
     const t = vChart.kreuz;
     $('#vLegende').innerHTML = PROFILE_LISTE.map(p => '<button data-p="' + p + '" aria-pressed="' + !aus[p] + '"><span class="farbpunkt" style="background:' + GlukoSim.PROFILE[p].farbe + '"></span>' +
-      GlukoSim.PROFILE[p].name + (t != null ? ' <span class="lw">' + Math.round(vErg[p].sim.G[t]) + '</span>' : '') + '</button>').join('') +
-      (t != null ? '<span class="klein" style="align-self:center">um ' + H(t) + '</span>' : '');
+      GlukoSim.PROFILE[p].name + (t != null ? ' <span class="lw">' + Math.round(vErg[p].sim.G[t]) + '</span>' : '') + '</button>').join('') + (t != null ? '<span class="klein" style="align-self:center">um ' + H(t) + '</span>' : '');
     $('#vTabelle').innerHTML = '<thead><tr><th>Profil</th><th>Spitze</th><th>Ø</th><th>70–140</th><th>Insulin max</th></tr></thead><tbody>' +
       PROFILE_LISTE.map(p => { const s = vErg[p].st; return '<tr><td><span class="farbpunkt" style="background:' + GlukoSim.PROFILE[p].farbe + '"></span>' + GlukoSim.PROFILE[p].name + '</td><td>' + s.max + '</td><td>' + s.mittel + '</td><td>' + s.zielProzent + ' %</td><td>' + s.insulinMax + '</td></tr>'; }).join('') + '</tbody>';
-    $('#vHinweis').textContent = vErg.typ1.autoInsulin
-      ? 'Typ 1 wird mit einer Standard-Therapie simuliert: 16 IE Langzeitinsulin und 1 IE schnelles Insulin pro 10 g Kohlenhydrate.'
-      : 'Typ 1 nutzt das Insulin aus deinem Tagesplan. Werte in mg/dl, Insulin in µU/ml.';
-    $('#vInsulin').setAttribute('aria-pressed', zustand.vInsulinZeigen);
+    $('#vHinweis').textContent = 'Plan aus Schritt ' + (z.schrittIndex + 1) + ' („' + schritt().titel + '“). ' + (z.insulinAuto ? 'Typ 1 spritzt Insulin nach Faustregel.' : 'Typ 1 ohne Insulin.') + ' Werte in mg/dl, Insulin in µU/ml.';
+    $('#vInsulin').setAttribute('aria-pressed', z.vInsulinZeigen);
     $('#vErklaerBox').innerHTML = erklaerHTML(vErklaerung);
-    $('#vZoomAus').disabled = vChart.zoomIndex === 0;
-    $('#vZoomEin').disabled = vChart.zoomIndex === 2;
+    $('#vZoomAus').disabled = vChart.zoomIndex === 0; $('#vZoomEin').disabled = vChart.zoomIndex === 2;
   }
-
-  async function vergleichErklaeren() {
-    if (!zustand.eintraege.length) { toast('Trage zuerst etwas in den Tag ein.'); return; }
-    if (zustand.demoUnveraendert) { vErklaerung = { text: Demo.texte.vergleich, quelle: 'Beispieltag, vorab mit KI erstellt' }; renderVergleich(); return; }
+  function vergleichErklaeren() {
+    if (!plan().length) return;
     const r = vErg || vergleichErgebnisse();
-    const lokal = Texte.lokalerVergleich(r);
-    if (!zustand.apiKey) { vErklaerung = { text: lokal, quelle: 'Automatisch aus dem Modell. Mit Gemini-API-Key wird die Erklärung ausführlicher.' }; renderVergleich(); return; }
-    const version = planVersion;
-    vErklaerung = { laden: true }; renderVergleich();
-    try {
-      const text = await KI.vergleicheErklaeren(Texte.vergleichZusammenfassung(zustand.eintraege, r), zustand);
-      if (version !== planVersion) return;
-      vErklaerung = { text, quelle: 'Erklärt von Gemini' };
-    } catch (e) {
-      vErklaerung = { text: lokal, quelle: e.message + ' Stattdessen automatische Erklärung aus dem Modell.' };
-    }
-    if (seite === 'vergleich') renderVergleich();
+    vErklaerung = { text: Texte.lokalerVergleich(r), quelle: 'Automatisch aus den Werten der Simulation erstellt' };
+    renderVergleich();
   }
 
-  // ---------------- Mahlzeiten (Vorlagen) ----------------
-  function renderVorlagen() {
-    const ul = $('#vorlagenListe');
-    if (!zustand.vorlagen.length) {
-      ul.innerHTML = '<li class="leer">Noch keine gespeicherten Mahlzeiten.<br>Tippe auf + oder hake beim Eintragen „Als Mahlzeit speichern“ an.</li>';
-      return;
-    }
-    ul.innerHTML = zustand.vorlagen.map(v => '<li class="eintrag essen" data-id="' + v.id + '" tabindex="0" role="button"><span class="ico">' + ico('essen') + '</span>' +
-      '<span class="txt"><div class="t1">' + esc(v.name) + '</div><div class="t2">' + Math.round(v.summe.kh) + ' g KH, GI ' + v.summe.gi + ', ' + v.summe.kcal + ' kcal</div></span></li>').join('');
-  }
-
-  // ---------------- Sheet (Bottom-Sheet) ----------------
+  // ---------------- Sheet ----------------
   const sheet = $('#sheet'), scrim = $('#scrim'), sheetInhalt = $('#sheetInhalt');
-  let sheetOffen = false, sheetBeimSchliessen = null;
-  function oeffneSheet(html, beiMount, beimSchliessen) {
-    sheetInhalt.innerHTML = html;
-    sheetInhalt.scrollTop = 0;
+  let sheetOffen = false;
+  function oeffneSheet(html, beiMount) {
+    sheetInhalt.innerHTML = html; sheetInhalt.scrollTop = 0;
     if (!sheetOffen) { history.pushState({ seite, sheet: true }, ''); sheetOffen = true; }
-    sheetBeimSchliessen = beimSchliessen || null;
     requestAnimationFrame(() => { sheet.classList.add('offen'); scrim.classList.add('offen'); });
     beiMount && beiMount(sheetInhalt);
   }
-  function schliesseSheetUI() {
-    sheetOffen = false;
-    sheet.classList.remove('offen'); scrim.classList.remove('offen');
-    sheet.style.transform = '';
-    const cb = sheetBeimSchliessen; sheetBeimSchliessen = null; cb && cb();
-    if (document.activeElement && sheet.contains(document.activeElement)) document.activeElement.blur();
-  }
-  function schliesseSheet() {
-    if (!sheetOffen) return;
-    if (history.state && history.state.sheet) history.back(); else schliesseSheetUI();
-  }
+  function schliesseSheetUI() { sheetOffen = false; sheet.classList.remove('offen'); scrim.classList.remove('offen'); sheet.style.transform = ''; }
+  function schliesseSheet() { if (!sheetOffen) return; if (history.state && history.state.sheet) history.back(); else schliesseSheetUI(); }
   scrim.addEventListener('click', schliesseSheet);
-  (function griffZiehen() {
-    const griff = $('#sheetGriff'); let y0 = null, dy = 0;
-    griff.addEventListener('pointerdown', e => { y0 = e.clientY; dy = 0; griff.setPointerCapture(e.pointerId); sheet.classList.add('zieht'); });
-    griff.addEventListener('pointermove', e => { if (y0 == null) return; dy = Math.max(0, e.clientY - y0); sheet.style.transform = 'translateY(' + dy + 'px)'; });
+  (function () {
+    const g = $('#sheetGriff'); let y0 = null, dy = 0;
+    g.addEventListener('pointerdown', e => { y0 = e.clientY; dy = 0; g.setPointerCapture(e.pointerId); sheet.classList.add('zieht'); });
+    g.addEventListener('pointermove', e => { if (y0 == null) return; dy = Math.max(0, e.clientY - y0); sheet.style.transform = 'translateY(' + dy + 'px)'; });
     const ende = () => { if (y0 == null) return; y0 = null; sheet.classList.remove('zieht'); sheet.style.transform = ''; if (dy > 90) schliesseSheet(); };
-    griff.addEventListener('pointerup', ende); griff.addEventListener('pointercancel', ende);
+    g.addEventListener('pointerup', ende); g.addEventListener('pointercancel', ende);
   })();
-
   function bestaetigen(frage, text, knopf, aktion) {
     oeffneSheet('<h3>' + esc(frage) + '</h3><p class="untertitel">' + esc(text) + '</p><div class="zeile"><button class="btn tonal" data-x="nein">Abbrechen</button><button class="btn gefahr" data-x="ja">' + esc(knopf) + '</button></div>', el => {
       $('[data-x="nein"]', el).onclick = schliesseSheet;
@@ -469,291 +278,219 @@
     });
   }
 
-  function standardZeit() {
-    if (planChart.kreuz != null) return runde(planChart.kreuz, 15);
-    return Math.max(0, Math.min(1425, runde(planChart.sichtMitte(), 15)));
-  }
-  function segmentWahl(el, wert) {
-    for (const b of $$('button', el)) b.setAttribute('aria-checked', b.dataset.wert === wert);
-  }
-
-  // ---------------- Neu-Auswahl ----------------
-  function oeffneNeu() {
-    oeffneSheet('<h3>Hinzufügen</h3><div class="neu-kacheln">' +
-      '<button class="neu-kachel" data-neu="essen"><span class="ico">' + ico('essen') + '</span>Mahlzeit</button>' +
-      '<button class="neu-kachel sport" data-neu="sport"><span class="ico">' + ico('sport') + '</span>Sport</button>' +
-      '<button class="neu-kachel insulin" data-neu="insulin"><span class="ico">' + ico('insulin') + '</span>Insulin</button></div>' +
-      (zustand.profil !== 'typ1' ? '<p class="klein">Insulin wirkt in der Simulation nur beim Profil Typ 1.</p>' : ''), el => {
-      for (const b of $$('[data-neu]', el)) b.onclick = () => {
-        const z = standardZeit();
-        if (b.dataset.neu === 'essen') mahlzeitSheet(null, z);
-        else if (b.dataset.neu === 'sport') sportSheet(null, z);
-        else insulinSheet(null, z);
-      };
-    });
-  }
-
-  function oeffneEintrag(e) {
-    if (e.typ === 'essen') mahlzeitSheet(e);
-    else if (e.typ === 'sport') sportSheet(e);
-    else insulinSheet(e);
-  }
-
-  // ---------------- Mahlzeit ----------------
-  function namensVorschlag(zeit) {
-    return zeit < 630 ? 'Frühstück' : zeit < 690 ? 'Snack' : zeit < 870 ? 'Mittagessen' : zeit < 1050 ? 'Snack' : 'Abendessen';
-  }
-
-  function mahlzeitSheet(vorhanden, zeit, modus) {
-    modus = modus || 'plan';
-    const e = vorhanden ? klon(vorhanden) : { id: neueId(), typ: 'essen', name: '', eingabe: '', zutaten: [], zeit: zeit || 720, quelle: '' };
-    const w = { unbekannt: [], busy: false, alsVorlage: false };
-    const html =
-      '<h3>' + (vorhanden ? 'Mahlzeit bearbeiten' : modus === 'vorlage' ? 'Neue gespeicherte Mahlzeit' : 'Mahlzeit') + '</h3>' +
-      '<label class="feld"><span>Was isst du?</span><textarea id="mEingabe" rows="2" placeholder="z. B. Nudeln 250 g, Tomatensoße 150 g">' + esc(e.eingabe || '') + '</textarea></label>' +
-      '<div class="zeile"><button class="btn tonal" id="mFoto">' + ico('kamera') + 'Foto <span class="experimentell">Test</span></button>' +
-      '<button class="btn primaer" id="mAnalyse">Nährwerte ermitteln</button></div>' +
-      '<input type="file" accept="image/*" capture="environment" id="mFotoInput" hidden>' +
-      (!vorhanden && zustand.vorlagen.length && modus === 'plan' ? '<div class="chips-scroll" id="mVorlagen">' + zustand.vorlagen.map(v => '<button data-v="' + v.id + '">' + esc(v.name) + '</button>').join('') + '</div>' : '') +
-      '<div id="mErgebnis" style="display:flex;flex-direction:column;gap:14px"></div>';
-    oeffneSheet(html, el => {
-      const eingabe = $('#mEingabe', el), erg = $('#mErgebnis', el);
-      const setzeBusy = (b, knopf) => { w.busy = b; for (const k of [$('#mAnalyse', el), $('#mFoto', el)]) k.disabled = b; if (knopf) knopf.innerHTML = b ? '<span class="spinner"></span>Wird ermittelt' : knopf.dataset.label; };
-      $('#mAnalyse', el).dataset.label = $('#mAnalyse', el).innerHTML;
-      $('#mFoto', el).dataset.label = $('#mFoto', el).innerHTML;
-
-      function zutatHTML(z, i) {
-        const f = (k, l) => '<label>' + l + '<input type="number" inputmode="decimal" step="any" data-k="' + k + '" value="' + (z[k] ?? 0) + '"></label>';
-        return '<div class="zutat" data-i="' + i + '"><div class="zutat-kopf"><input class="z-name" value="' + esc(z.name) + '" aria-label="Zutat">' +
-          '<span class="gramm"><input type="number" inputmode="decimal" class="z-gramm" value="' + z.gramm + '" aria-label="Menge in Gramm">g</span>' +
-          '<button class="x" aria-label="Zutat entfernen">' + ico('x') + '</button></div>' +
-          '<div class="zutat-werte">' + f('kh', 'KH') + f('zucker', 'Zucker') + f('ballaststoffe', 'Ballast') + f('fett', 'Fett') + f('protein', 'Eiweiß') + f('gi', 'GI') + '</div></div>';
-      }
-      function summeHTML() {
-        const s = Lebensmittel.summe(e.zutaten);
-        return '<div class="summe"><div><b>' + Math.round(s.kh) + '</b><span>g KH</span></div><div><b>' + s.gi + '</b><span>GI</span></div><div><b>' + Math.round(s.gl) + '</b><span>Glyk. Last</span></div><div><b>' + s.kcal + '</b><span>kcal</span></div></div>';
-      }
-      function zeichne() {
-        if (!e.zutaten.length) { erg.innerHTML = w.unbekannt.length ? '<p class="warnung">Nicht erkannt: ' + esc(w.unbekannt.join(', ')) + '.</p>' : ''; return; }
-        const quelle = e.quelle === 'Gemini' ? 'Werte von Gemini' : e.quelle === 'Gemini (Foto)' ? 'Werte von Gemini, aus dem Foto geschätzt' : e.quelle === 'Liste' ? 'Richtwerte aus der eingebauten Liste' : e.quelle ? 'Werte: ' + e.quelle : 'Eigene Werte';
-        erg.innerHTML =
-          '<span class="quelle-tag">' + ico('funke') + esc(quelle) + '. Alle Werte lassen sich anpassen.</span>' +
-          (w.unbekannt.length ? '<p class="warnung">Nicht in der Liste: ' + esc(w.unbekannt.join(', ')) + '. Trage die Werte selbst ein oder hinterlege einen Gemini-API-Key.</p>' : '') +
-          '<label class="feld"><span>Name</span><input id="mName" value="' + esc(e.name) + '" placeholder="' + namensVorschlag(e.zeit) + '"></label>' +
-          '<div id="mZutaten" style="display:flex;flex-direction:column;gap:8px">' + e.zutaten.map(zutatHTML).join('') + '</div>' +
-          '<button class="text-btn" id="mPlus" style="align-self:flex-start">+ Zutat hinzufügen</button>' +
-          '<div id="mSumme">' + summeHTML() + '</div>' +
-          (modus === 'plan' ? '<label class="feld"><span>Uhrzeit</span><input type="time" id="mZeit" value="' + H(e.zeit) + '"></label>' : '') +
-          (modus === 'plan' ? '<label class="schalter"><input type="checkbox" id="mVorlage"' + (w.alsVorlage ? ' checked' : '') + '><span class="schiene"></span><span>Als Mahlzeit speichern (zum Wiederverwenden)</span></label>' : '') +
-          '<button class="btn primaer voll" id="mSpeichern">' + (vorhanden ? 'Änderungen speichern' : modus === 'vorlage' ? 'Mahlzeit speichern' : 'Zum Tag hinzufügen') + '</button>' +
-          (vorhanden ? '<button class="text-btn gefahr" id="mLoeschen">Mahlzeit löschen</button>' : '');
-        binde();
-      }
-      function aktualisiereSumme() { const s = $('#mSumme', el); if (s) s.innerHTML = summeHTML(); }
-      function binde() {
-        $('#mName', el).oninput = ev => { e.name = ev.target.value; };
-        const zt = $('#mZeit', el); if (zt) zt.onchange = ev => { e.zeit = zuMin(ev.target.value); };
-        const vl = $('#mVorlage', el); if (vl) vl.onchange = ev => { w.alsVorlage = ev.target.checked; };
-        $('#mPlus', el).onclick = () => { e.zutaten.push({ name: 'Zutat', gramm: 100, kh: 0, zucker: 0, ballaststoffe: 0, fett: 0, protein: 0, kcal: 0, gi: 50 }); zeichne(); };
-        for (const box of $$('.zutat', el)) {
-          const z = e.zutaten[+box.dataset.i];
-          $('.z-name', box).oninput = ev => { z.name = ev.target.value; };
-          $('.x', box).onclick = () => { e.zutaten.splice(+box.dataset.i, 1); zeichne(); };
-          $('.z-gramm', box).onchange = ev => {
-            const neu = Math.max(0, parseFloat(ev.target.value) || 0), alt = z.gramm || 0;
-            if (alt > 0) { const f = neu / alt; for (const k of ['kh', 'zucker', 'ballaststoffe', 'fett', 'protein']) z[k] = Math.round(z[k] * f * 10) / 10; z.kcal = Math.round(z.kcal * f); }
-            z.gramm = neu;
-            for (const inp of $$('.zutat-werte input', box)) inp.value = z[inp.dataset.k];
-            aktualisiereSumme();
-          };
-          for (const inp of $$('.zutat-werte input', box)) inp.oninput = () => { z[inp.dataset.k] = Math.max(0, parseFloat(inp.value) || 0); aktualisiereSumme(); };
-        }
-        $('#mSpeichern', el).onclick = speichereMahlzeit;
-        const lo = $('#mLoeschen', el); if (lo) lo.onclick = () => { zustand.eintraege = zustand.eintraege.filter(x => x.id !== e.id); schliesseSheet(); geaendert(); toast('Mahlzeit gelöscht'); };
-      }
-      function lokalAnalysieren(text) {
-        const r = Lebensmittel.parse(text);
-        w.unbekannt = r.unbekannt;
-        e.zutaten = r.zutaten.concat(r.unbekannt.map(u => {
-          const m = u.match(/(\d+(?:[.,]\d+)?)/);
-          return { name: u.replace(/(\d+(?:[.,]\d+)?)\s*(g|ml|gramm)?/i, '').trim() || u, gramm: m ? Math.round(parseFloat(m[1].replace(',', '.'))) : 100, kh: 0, zucker: 0, ballaststoffe: 0, fett: 0, protein: 0, kcal: 0, gi: 50 };
-        }));
-        e.quelle = 'Liste';
-      }
-      async function analysieren() {
-        const text = eingabe.value.trim();
-        if (!text) { toast('Beschreibe zuerst, was du isst.'); eingabe.focus(); return; }
-        e.eingabe = text; w.unbekannt = [];
-        if (zustand.apiKey) {
-          setzeBusy(true, $('#mAnalyse', el));
-          try {
-            const r = await KI.naehrwerte(text, zustand);
-            e.zutaten = r.zutaten; e.quelle = 'Gemini';
-            if (!e.name && r.name) e.name = r.name;
-          } catch (err) {
-            toast(err.message + ' Nutze eingebaute Liste.');
-            lokalAnalysieren(text);
-          }
-          setzeBusy(false, $('#mAnalyse', el));
-        } else lokalAnalysieren(text);
-        zeichne();
-      }
-      async function fotoAnalysieren(datei) {
-        if (!zustand.apiKey) { toast('Für Fotos brauchst du einen Gemini-API-Key (Einstellungen).'); return; }
-        setzeBusy(true, $('#mFoto', el));
-        try {
-          const bild = await verkleinere(datei);
-          const r = await KI.naehrwerteBild(bild, eingabe.value.trim(), zustand);
-          e.zutaten = r.zutaten; e.quelle = 'Gemini (Foto)'; w.unbekannt = [];
-          if (!e.name && r.name) e.name = r.name;
-          e.eingabe = r.zutaten.map(z => z.name + ' ' + z.gramm + ' g').join(', ');
-          eingabe.value = e.eingabe;
-        } catch (err) { toast(err.message); }
-        setzeBusy(false, $('#mFoto', el));
-        zeichne();
-      }
-      function speichereMahlzeit() {
-        if (!e.zutaten.length) { toast('Keine Zutaten vorhanden.'); return; }
-        e.summe = Lebensmittel.summe(e.zutaten);
-        e.name = (e.name || '').trim() || namensVorschlag(e.zeit);
-        if (modus === 'vorlage' || w.alsVorlage) {
-          zustand.vorlagen.unshift({ id: neueId(), name: e.name, eingabe: e.eingabe, zutaten: klon(e.zutaten), summe: e.summe, quelle: e.quelle });
-          zustand.vorlagen = zustand.vorlagen.slice(0, 60);
-        }
-        if (modus === 'vorlage') { speichern(); schliesseSheet(); renderVorlagen(); toast('Mahlzeit gespeichert'); return; }
-        const i = zustand.eintraege.findIndex(x => x.id === e.id);
-        if (i >= 0) zustand.eintraege[i] = e; else zustand.eintraege.push(e);
-        schliesseSheet(); vib(10); geaendert();
-        planChart.zeigeZeit(e.zeit, true);
-        toast(vorhanden ? 'Gespeichert' : '„' + e.name + '“ hinzugefügt');
-      }
-      $('#mAnalyse', el).onclick = analysieren;
-      $('#mFoto', el).onclick = () => $('#mFotoInput', el).click();
-      $('#mFotoInput', el).onchange = ev => { const f = ev.target.files && ev.target.files[0]; if (f) fotoAnalysieren(f); ev.target.value = ''; };
-      eingabe.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); analysieren(); } });
-      const vc = $('#mVorlagen', el);
-      if (vc) vc.onclick = ev => {
-        const b = ev.target.closest('[data-v]'); if (!b) return;
-        const v = zustand.vorlagen.find(x => x.id === b.dataset.v); if (!v) return;
-        e.name = v.name; e.eingabe = v.eingabe || ''; e.zutaten = klon(v.zutaten); e.quelle = v.quelle || 'gespeichert';
-        eingabe.value = e.eingabe; zeichne();
-      };
-      zeichne();
-      if (!vorhanden && !zustand.vorlagen.length) setTimeout(() => eingabe.focus(), 350);
-    });
-  }
-
-  function verkleinere(datei) {
-    return new Promise((ok, fehler) => {
-      const r = new FileReader();
-      r.onerror = () => fehler(new Error('Foto konnte nicht gelesen werden.'));
-      r.onload = () => {
-        const img = new Image();
-        img.onerror = () => fehler(new Error('Foto-Format wird nicht unterstützt.'));
-        img.onload = () => {
-          const max = 1024, f = Math.min(1, max / Math.max(img.width, img.height));
-          const c = document.createElement('canvas'); c.width = Math.round(img.width * f); c.height = Math.round(img.height * f);
-          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-          ok({ mime: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.82).split(',')[1] });
-        };
-        img.src = r.result;
-      };
-      r.readAsDataURL(datei);
-    });
-  }
-
-  // ---------------- Sport ----------------
-  function sportSheet(vorhanden, zeit) {
-    const e = vorhanden ? klon(vorhanden) : { id: neueId(), typ: 'sport', art: 'Spazieren', dauer: 30, intensitaet: 'leicht', zeit: zeit || 1020 };
-    oeffneSheet('<h3>' + (vorhanden ? 'Sport bearbeiten' : 'Sport') + '</h3>' +
-      '<div class="wahl" id="sArt" role="radiogroup">' + SPORTARTEN.map(s => '<button data-wert="' + s[0] + '" role="radio">' + (s[0] === 'Sport' ? 'Anderes' : s[0]) + '</button>').join('') + '</div>' +
-      '<div class="bereich"><div class="bereich-kopf"><span>Dauer</span><output id="sDauerW"></output></div><input type="range" id="sDauer" min="5" max="120" step="5" value="' + e.dauer + '"></div>' +
-      '<div class="feld"><span>Intensität</span><div class="segment" id="sInt" role="radiogroup"><button data-wert="leicht" role="radio">Leicht</button><button data-wert="mittel" role="radio">Mittel</button><button data-wert="intensiv" role="radio">Intensiv</button></div></div>' +
-      '<label class="feld"><span>Beginn</span><input type="time" id="sZeit" value="' + H(e.zeit) + '"></label>' +
-      '<p class="klein">Arbeitende Muskeln nehmen Glukose auch ohne Insulin auf. Danach wirkt Insulin für einige Stunden stärker.</p>' +
-      '<button class="btn primaer voll" id="sSpeichern">' + (vorhanden ? 'Änderungen speichern' : 'Zum Tag hinzufügen') + '</button>' +
-      (vorhanden ? '<button class="text-btn gefahr" id="sLoeschen">Sport löschen</button>' : ''), el => {
-      const art = $('#sArt', el), int = $('#sInt', el);
-      const zeige = () => { segmentWahl(art, e.art); segmentWahl(int, e.intensitaet); $('#sDauerW', el).textContent = e.dauer + ' min'; };
-      art.onclick = ev => { const b = ev.target.closest('button'); if (!b) return; e.art = b.dataset.wert; e.intensitaet = (SPORTARTEN.find(s => s[0] === e.art) || [0, 'mittel'])[1]; zeige(); };
-      int.onclick = ev => { const b = ev.target.closest('button'); if (!b) return; e.intensitaet = b.dataset.wert; zeige(); };
-      $('#sDauer', el).oninput = ev => { e.dauer = +ev.target.value; zeige(); };
-      $('#sZeit', el).onchange = ev => { e.zeit = zuMin(ev.target.value); };
-      $('#sSpeichern', el).onclick = () => {
-        e.zeit = Math.min(e.zeit, 1440 - e.dauer);
-        const i = zustand.eintraege.findIndex(x => x.id === e.id);
-        if (i >= 0) zustand.eintraege[i] = e; else zustand.eintraege.push(e);
-        schliesseSheet(); vib(10); geaendert(); planChart.zeigeZeit(e.zeit, true);
-        toast(vorhanden ? 'Gespeichert' : e.art + ' hinzugefügt');
-      };
-      const lo = $('#sLoeschen', el); if (lo) lo.onclick = () => { zustand.eintraege = zustand.eintraege.filter(x => x.id !== e.id); schliesseSheet(); geaendert(); toast('Sport gelöscht'); };
-      zeige();
-    });
-  }
-
-  // ---------------- Insulin ----------------
-  function insulinSheet(vorhanden, zeit) {
-    const e = vorhanden ? klon(vorhanden) : { id: neueId(), typ: 'insulin', art: 'schnell', einheiten: 6, zeit: zeit || 720 };
-    const kh = zustand.eintraege.filter(x => x.typ === 'essen' && Math.abs(x.zeit - e.zeit) <= 45).reduce((a, x) => a + x.summe.kh, 0);
-    oeffneSheet('<h3>' + (vorhanden ? 'Insulin bearbeiten' : 'Insulin') + '</h3>' +
-      (zustand.profil !== 'typ1' ? '<p class="warnung">Aktuelles Profil: ' + GlukoSim.PROFILE[zustand.profil].name + '. Gespritztes Insulin wirkt in der Simulation nur bei Typ 1' + (zustand.profil === 'typ2' ? ' (oder in den Einstellungen für Typ 2 aktivieren)' : '') + '.</p>' : '') +
-      '<div class="segment" id="iArt" role="radiogroup"><button data-wert="schnell" role="radio">Schnell (zum Essen)</button><button data-wert="lang" role="radio">Lang (Grundbedarf)</button></div>' +
-      '<div class="stepper"><button id="iMinus" aria-label="Weniger">−</button><output id="iWert"></output><button id="iPlus" aria-label="Mehr">+</button></div>' +
-      '<label class="feld"><span>Uhrzeit</span><input type="time" id="iZeit" value="' + H(e.zeit) + '"></label>' +
-      '<p class="klein" id="iHinweis"></p>' +
-      '<button class="btn primaer voll" id="iSpeichern">' + (vorhanden ? 'Änderungen speichern' : 'Zum Tag hinzufügen') + '</button>' +
-      (vorhanden ? '<button class="text-btn gefahr" id="iLoeschen">Insulin löschen</button>' : ''), el => {
-      const zeige = () => {
-        segmentWahl($('#iArt', el), e.art);
-        $('#iWert', el).innerHTML = e.einheiten + '<small> IE</small>';
-        $('#iHinweis', el).textContent = e.art === 'lang'
-          ? 'Langzeitinsulin wirkt etwa 24 Stunden gleichmäßig und ersetzt die Grundausschüttung der Bauchspeicheldrüse.'
-          : 'Wirkt nach etwa 15 Minuten, am stärksten nach rund einer Stunde. Faustregel im Modell: 1 IE pro 10 g Kohlenhydrate' + (kh ? ' (hier ca. ' + Math.round(kh / 10) + ' IE für ' + Math.round(kh) + ' g).' : '.');
-      };
-      $('#iArt', el).onclick = ev => { const b = ev.target.closest('button'); if (!b) return; e.art = b.dataset.wert; if (!vorhanden) { e.einheiten = e.art === 'lang' ? 16 : 6; if (e.art === 'lang') e.zeit = 1320, $('#iZeit', el).value = H(1320); } zeige(); };
-      $('#iMinus', el).onclick = () => { e.einheiten = Math.max(1, e.einheiten - 1); zeige(); };
-      $('#iPlus', el).onclick = () => { e.einheiten = Math.min(60, e.einheiten + 1); zeige(); };
-      $('#iZeit', el).onchange = ev => { e.zeit = zuMin(ev.target.value); };
-      $('#iSpeichern', el).onclick = () => {
-        const i = zustand.eintraege.findIndex(x => x.id === e.id);
-        if (i >= 0) zustand.eintraege[i] = e; else zustand.eintraege.push(e);
-        schliesseSheet(); vib(10); geaendert(); toast(vorhanden ? 'Gespeichert' : 'Insulin hinzugefügt');
-      };
-      const lo = $('#iLoeschen', el); if (lo) lo.onclick = () => { zustand.eintraege = zustand.eintraege.filter(x => x.id !== e.id); schliesseSheet(); geaendert(); toast('Insulin gelöscht'); };
-      zeige();
-    });
-  }
-
   // ---------------- Profil ----------------
   function setzeProfil(p) {
-    if (!GlukoSim.PROFILE[p] || p === zustand.profil) return;
-    zustand.profil = p; vorschau = null; vorschlaege = null; erklaerung = null;
-    speichern(); renderPlan(); renderEinstellungen();
+    if (!GlukoSim.PROFILE[p] || p === z.profil) return;
+    z.profil = p;
+    if (z.mahlzeiten.length) { berechneSchritte(); toast('Neu berechnet für ' + GlukoSim.PROFILE[p].name); }
+    neuBerechnet(); renderEinstellungen();
+  }
+  function profilKarten(aktiv) {
+    return PROFILE_LISTE.map(p => '<button class="profil-karte" data-p="' + p + '" role="radio" aria-checked="' + (p === aktiv) + '"><span class="farbpunkt" style="background:' + GlukoSim.PROFILE[p].farbe + '"></span><span><b>' + PROFIL_INFO[p][0] + '</b><span>' + PROFIL_INFO[p][1] + '</span></span></button>').join('');
   }
   function profilSheet() {
-    oeffneSheet('<h3>Stoffwechsel</h3><p class="untertitel">Wähle, wessen Tag simuliert wird.</p>' +
-      PROFILE_LISTE.map(p => '<button class="profil-karte" data-p="' + p + '" role="radio" aria-checked="' + (p === zustand.profil) + '"><span class="farbpunkt" style="background:' + GlukoSim.PROFILE[p].farbe + '"></span><span><b>' + PROFIL_INFO[p][0] + '</b><span>' + PROFIL_INFO[p][1] + '</span></span></button>').join(''), el => {
-      for (const b of $$('[data-p]', el)) b.onclick = () => { setzeProfil(b.dataset.p); vib(8); schliesseSheet(); };
+    oeffneSheet('<h3>Stoffwechsel</h3><p class="untertitel">Der Tag wird für das neue Profil neu berechnet.</p>' + profilKarten(z.profil), el => {
+      for (const b of $$('[data-p]', el)) b.onclick = () => { schliesseSheet(); setzeProfil(b.dataset.p); vib(8); };
     });
   }
 
-  function vorlageSheet(v) {
-    oeffneSheet('<h3>' + esc(v.name) + '</h3><p class="untertitel">' + v.zutaten.map(z => esc(z.name) + ' ' + z.gramm + ' g').join(', ') + '</p>' +
-      '<div class="summe"><div><b>' + Math.round(v.summe.kh) + '</b><span>g KH</span></div><div><b>' + v.summe.gi + '</b><span>GI</span></div><div><b>' + Math.round(v.summe.gl) + '</b><span>Glyk. Last</span></div><div><b>' + v.summe.kcal + '</b><span>kcal</span></div></div>' +
-      '<label class="feld"><span>Uhrzeit</span><input type="time" id="vZeit" value="' + H(standardZeit()) + '"></label>' +
-      '<button class="btn primaer voll" id="vHinzu">Zum Tag hinzufügen</button><button class="text-btn gefahr" id="vLoeschen">Gespeicherte Mahlzeit löschen</button>', el => {
-      $('#vHinzu', el).onclick = () => {
-        const z = zuMin($('#vZeit', el).value);
-        zustand.eintraege.push({ id: neueId(), typ: 'essen', name: v.name, eingabe: v.eingabe, zutaten: klon(v.zutaten), summe: v.summe, quelle: v.quelle, zeit: z });
-        schliesseSheet(); geaendert(); toast('„' + v.name + '“ um ' + H(z) + ' hinzugefügt');
-      };
-      $('#vLoeschen', el).onclick = () => { zustand.vorlagen = zustand.vorlagen.filter(x => x.id !== v.id); speichern(); schliesseSheet(); renderVorlagen(); };
-    });
+  // ---------------- Tages-Assistent ----------------
+  let w = null;
+  const asEl = $('#assistent');
+  function standardMahlzeit(art) {
+    const [von, bis] = Optimierer.STANDARD_ZEITRAUM[art];
+    return { items: [], modus: 'zeitraum', von, bis, zeit: Math.round((von + bis) / 2 / 15) * 15 };
   }
+  function oeffneAssistent(start, neuerTag) {
+    w = { schritt: start || 0, neuerTag: !!neuerTag, profil: z.profil, m: {}, bewegung: neuerTag ? [] : klon(z.bewegung),
+      sportZeitraum: z.sportZeitraum.slice(), neu: { art: 'Spazieren', dauer: 30 }, busy: false, gezeigt: -1 };
+    for (const [art] of MAHLZEITEN) {
+      const alt = !neuerTag && z.mahlzeiten.find(m => m.art === art);
+      w.m[art] = alt ? ausMahlzeit(alt) : standardMahlzeit(art);
+    }
+    asEl.hidden = false; zeigeAssistent();
+  }
+  function schliesseAssistent() { asEl.hidden = true; w = null; }
+
+  // Gespeicherte Mahlzeit (oder Beispieltag) -> Eingabe im Assistenten
+  function ausMahlzeit(m) {
+    const std = standardMahlzeit(m.art);
+    return { items: (m.zutaten || []).filter(x => Lebensmittel.eintrag(x.name)).map(x => ({ name: x.name, gramm: x.gramm })),
+      modus: m.fest ? 'fest' : 'zeitraum', von: m.von != null ? m.von : std.von, bis: m.bis != null ? m.bis : std.bis, zeit: m.zeit != null ? m.zeit : std.zeit };
+  }
+  const zutatenAus = items => items.map(i => Lebensmittel.zutat(i.name, i.gramm)).filter(Boolean);
+  // Plus/Minus: ein Stück (Brötchen, Ei …) oder 50 g bzw. 50 ml
+  const mengenSchritt = name => (Lebensmittel.einheit(name) === 'g' && Lebensmittel.stueck(name)) || 50;
+  const zahlText = x => String(Math.round(x * 2) / 2).replace('.', ',');
+
+  function infoText(m) {
+    if (!m.items.length) return '';
+    return '<span class="as-info">' + Math.round(Lebensmittel.summe(zutatenAus(m.items)).kh) + ' g Kohlenhydrate</span>';
+  }
+  function zutatUnter(it) {
+    const zt = Lebensmittel.zutat(it.name, it.gramm), st = Lebensmittel.einheit(it.name) === 'g' && Lebensmittel.stueck(it.name);
+    return Math.round(zt.kh) + ' g KH' + (st ? ' · ' + zahlText(it.gramm / st) + ' Stück' : '');
+  }
+  function zutatenHtml(m) {
+    if (!m.items.length) return '';
+    return '<ul class="as-zutaten">' + m.items.map((it, i) =>
+      '<li class="as-zutat" data-i="' + i + '"><span class="n"><b>' + esc(it.name) + '</b><span data-unter>' + zutatUnter(it) + '</span></span>' +
+      '<span class="menge"><button data-menge="-1" aria-label="Weniger">−</button>' +
+      '<input type="number" inputmode="numeric" min="1" max="3000" data-feld="gramm" value="' + it.gramm + '" aria-label="Menge ' + esc(it.name) + '">' +
+      '<span class="einh">' + Lebensmittel.einheit(it.name) + '</span><button data-menge="1" aria-label="Mehr">+</button></span>' +
+      '<button class="weg" data-zweg="' + i + '" aria-label="' + esc(it.name) + ' entfernen">' + ico('x') + '</button></li>').join('') + '</ul>';
+  }
+  function trefferHtml(q) {
+    const t = Lebensmittel.suche(q, 6);
+    if (!t.length) return '<div class="leer">„' + esc(q.trim()) + '“ steht nicht in der Tabelle. Probier ein ähnliches Lebensmittel.</div>';
+    return t.map(e => '<button data-treffer="' + esc(e.name) + '"><span>' + esc(e.name) + '</span><span class="neben">' + zahlText(e.kh) + ' g KH pro 100 ' + Lebensmittel.einheit(e.name) + '</span></button>').join('');
+  }
+  // Nur eine Mahlzeit-Karte neu zeichnen (das Suchfeld behält den Fokus)
+  function zeichneKarte(art) {
+    const karte = asEl.querySelector('.as-mahlzeit[data-art="' + art + '"]'); if (!karte) return;
+    const m = w.m[art], name = MAHLZEITEN.find(x => x[0] === art)[1];
+    karte.querySelector('.as-mahlzeit-kopf').innerHTML = '<b>' + name + '</b>' + infoText(m);
+    karte.querySelector('.as-zutaten-box').innerHTML = zutatenHtml(m);
+  }
+  function zeigeTreffer(karte, q) {
+    const box = karte.querySelector('.as-treffer');
+    box.innerHTML = q.trim() ? trefferHtml(q) : '';
+    box.hidden = !q.trim();
+  }
+  function hinzufuegen(art, name) {
+    const m = w.m[art], da = m.items.find(i => i.name === name);
+    if (da) da.gramm = Math.min(3000, da.gramm + mengenSchritt(name)); else m.items.push({ name, gramm: Lebensmittel.startMenge(name) });
+    vib(8); zeichneKarte(art);
+    const karte = asEl.querySelector('.as-mahlzeit[data-art="' + art + '"]'), feld = karte.querySelector('[data-feld="suche"]');
+    feld.value = ''; zeigeTreffer(karte, '');
+  }
+
+  function zeigeAssistent() {
+    const s = w.schritt, punkte = '<div class="ob-punkte">' + [0, 1, 2].map(i => '<i class="' + (i === s ? 'an' : '') + '"></i>').join('') + '</div>';
+    const zu = z.schritte.length ? '<button class="icon-btn" data-as="zu" aria-label="Schließen">' + ico('x') + '</button>' : '';
+    let inhalt = '', fuss = '';
+    if (s === 0) {
+      inhalt = '<div class="as-titel">' + (w.neuerTag ? 'Neuer Tag' : 'Stoffwechsel') + '</div><p class="as-text">Für wen planen wir heute?</p>' + profilKarten(w.profil) +
+        '<button class="text-btn as-demo" data-as="demo">Beispieltag laden</button>';
+      fuss = '<button class="btn primaer" data-as="weiter">Weiter</button>';
+    } else if (s === 1) {
+      inhalt = '<div class="as-titel">Deine Mahlzeiten</div><p class="as-text">Trag ein, was du isst und wann es geht. Snacks schlägt der Algorithmus selbst vor.</p>' +
+        MAHLZEITEN.map(([art, name, ph]) => {
+          const m = w.m[art];
+          return '<div class="as-mahlzeit" data-art="' + art + '"><div class="as-mahlzeit-kopf"><b>' + name + '</b>' + infoText(m) + '</div>' +
+            '<div class="as-zutaten-box">' + zutatenHtml(m) + '</div>' +
+            '<div class="as-suche">' + ico('suche') + '<input type="search" data-feld="suche" placeholder="Lebensmittel suchen, ' + ph + '" autocomplete="off" enterkeyhint="search" aria-label="Lebensmittel für ' + name + ' suchen"></div>' +
+            '<div class="as-treffer" hidden></div>' +
+            '<div class="segment" data-feld="modus" role="radiogroup"><button data-wert="zeitraum" role="radio" aria-checked="' + (m.modus === 'zeitraum') + '">Zeitraum</button><button data-wert="fest" role="radio" aria-checked="' + (m.modus === 'fest') + '">Feste Uhrzeit</button></div>' +
+            (m.modus === 'zeitraum'
+              ? '<div class="as-zeit"><label>Frühestens<input type="time" data-feld="von" value="' + H(m.von) + '"></label><label>Spätestens<input type="time" data-feld="bis" value="' + H(m.bis) + '"></label></div>'
+              : '<div class="as-zeit"><label>Uhrzeit<input type="time" data-feld="zeit" value="' + H(m.zeit) + '"></label></div>') + '</div>';
+        }).join('') + '<p class="klein">Ohne Lebensmittel wird die Mahlzeit ausgelassen. Es gibt nur Lebensmittel aus der Tabelle, damit jeder Wert eine Quelle hat.</p>' +
+        '<details class="as-liste-lm"><summary>Welche Lebensmittel kennt die App?</summary><p class="klein">' + esc(Lebensmittel.DB.map(e => e.name).join(', ')) + '</p></details>';
+      fuss = '<button class="btn tonal" data-as="zurueck">Zurück</button><button class="btn primaer" data-as="weiter">Weiter</button>';
+    } else {
+      inhalt = '<div class="as-titel">Bewegung</div><p class="as-text">Wie lange bewegst du dich heute? Wann genau, entscheidet der Algorithmus.</p>' +
+        '<div class="as-bewegung-neu"><div class="segment" data-feld="art" role="radiogroup">' + Object.keys(BEWEGUNG).map(a => '<button data-wert="' + a + '" role="radio" aria-checked="' + (w.neu.art === a) + '">' + a + '</button>').join('') + '</div>' +
+        '<div class="bereich"><div class="bereich-kopf"><span>Dauer</span><output id="asDauer">' + w.neu.dauer + ' min</output></div><input type="range" min="10" max="60" step="5" value="' + w.neu.dauer + '" data-feld="dauer"></div>' +
+        '<button class="btn tonal" data-as="plus">' + ico('plus') + 'Hinzufügen</button></div>' +
+        (w.bewegung.length ? '<ul class="as-liste">' + w.bewegung.map(b => '<li><span class="ico">' + ico('sport') + '</span><span class="txt">' + esc(b.art) + ', ' + b.dauer + ' min</span><button data-weg="' + b.id + '" aria-label="Entfernen">' + ico('x') + '</button></li>').join('') + '</ul>' : '<p class="klein">Noch keine Bewegung. Du kannst das auch auslassen.</p>') +
+        '<div class="as-zeit"><label>Zeit für Bewegung ab<input type="time" data-feld="sv" value="' + H(w.sportZeitraum[0]) + '"></label><label>bis<input type="time" data-feld="sb" value="' + H(w.sportZeitraum[1]) + '"></label></div>';
+      fuss = '<button class="btn tonal" data-as="zurueck">Zurück</button><button class="btn primaer" data-as="berechnen">' + (w.busy ? '<span class="spinner"></span>Berechne …' : 'Tag berechnen') + '</button>';
+    }
+    // Gleicher Schritt neu gezeichnet: Scroll-Position behalten, nicht neu einblenden
+    const alt = asEl.querySelector('.as-schritt'), gleich = w.gezeigt === s, top = gleich && alt ? alt.scrollTop : 0;
+    asEl.innerHTML = '<div class="as-kopf">' + punkte + zu + '</div><div class="as-schritt' + (gleich ? ' ruhig' : '') + '">' + inhalt + '</div><div class="as-fuss">' + fuss + '</div>';
+    asEl.querySelector('.as-schritt').scrollTop = top;
+    w.gezeigt = s;
+  }
+
+  asEl.addEventListener('input', ev => {
+    if (!w) return;
+    const f = ev.target.dataset.feld, karte = ev.target.closest('[data-art]');
+    if (f === 'suche' && karte) zeigeTreffer(karte, ev.target.value);
+    if (f === 'gramm' && karte) {
+      const li = ev.target.closest('[data-i]'), it = w.m[karte.dataset.art].items[+li.dataset.i], n = parseFloat(ev.target.value);
+      if (n > 0) { it.gramm = Math.min(3000, Math.round(n)); li.querySelector('[data-unter]').textContent = zutatUnter(it); karte.querySelector('.as-mahlzeit-kopf').innerHTML = '<b>' + MAHLZEITEN.find(x => x[0] === karte.dataset.art)[1] + '</b>' + infoText(w.m[karte.dataset.art]); }
+    }
+    if (f === 'dauer') { w.neu.dauer = +ev.target.value; $('#asDauer').textContent = w.neu.dauer + ' min'; }
+  });
+  asEl.addEventListener('change', ev => {
+    if (!w) return;
+    const f = ev.target.dataset.feld, karte = ev.target.closest('[data-art]');
+    if (karte && (f === 'von' || f === 'bis' || f === 'zeit')) w.m[karte.dataset.art][f] = zuMin(ev.target.value);
+    if (karte && f === 'gramm') ev.target.value = w.m[karte.dataset.art].items[+ev.target.closest('[data-i]').dataset.i].gramm;
+    if (f === 'sv') w.sportZeitraum[0] = zuMin(ev.target.value);
+    if (f === 'sb') w.sportZeitraum[1] = zuMin(ev.target.value);
+  });
+  asEl.addEventListener('keydown', ev => {
+    if (!w || ev.key !== 'Enter' || ev.target.dataset.feld !== 'suche') return;
+    ev.preventDefault();
+    const karte = ev.target.closest('[data-art]'), erster = karte.querySelector('[data-treffer]');
+    if (erster) hinzufuegen(karte.dataset.art, erster.dataset.treffer);
+  });
+  asEl.addEventListener('click', async ev => {
+    if (!w || w.busy) return;
+    const karte = ev.target.closest('.profil-karte');
+    if (karte) { w.profil = karte.dataset.p; for (const k of $$('.profil-karte', asEl)) k.setAttribute('aria-checked', k === karte); vib(6); return; }
+    const seg = ev.target.closest('.segment button');
+    if (seg) {
+      const feld = seg.parentElement.dataset.feld, k = seg.closest('[data-art]');
+      if (feld === 'modus' && k) { w.m[k.dataset.art].modus = seg.dataset.wert; zeigeAssistent(); }
+      if (feld === 'art') { w.neu.art = seg.dataset.wert; segmentWahl(seg.parentElement, seg.dataset.wert); }
+      return;
+    }
+    const tr = ev.target.closest('[data-treffer]');
+    if (tr) { hinzufuegen(tr.closest('[data-art]').dataset.art, tr.dataset.treffer); return; }
+    const mg = ev.target.closest('[data-menge]');
+    if (mg) {
+      const art = mg.closest('[data-art]').dataset.art, it = w.m[art].items[+mg.closest('[data-i]').dataset.i], st = mengenSchritt(it.name);
+      const min = Lebensmittel.einheit(it.name) === 'g' && Lebensmittel.stueck(it.name) ? st : 10;
+      it.gramm = Math.max(min, Math.min(3000, it.gramm + (+mg.dataset.menge) * st));
+      vib(5); zeichneKarte(art); return;
+    }
+    const zw = ev.target.closest('[data-zweg]');
+    if (zw) { const art = zw.closest('[data-art]').dataset.art; w.m[art].items.splice(+zw.dataset.zweg, 1); vib(8); zeichneKarte(art); return; }
+    const weg = ev.target.closest('[data-weg]');
+    if (weg) { w.bewegung = w.bewegung.filter(b => b.id !== weg.dataset.weg); zeigeAssistent(); return; }
+    const b = ev.target.closest('[data-as]'); if (!b) return;
+    const a = b.dataset.as;
+    if (a === 'zu') { schliesseAssistent(); return; }
+    if (a === 'zurueck') { w.schritt--; zeigeAssistent(); return; }
+    if (a === 'demo') {
+      const d = Demo.eingaben();
+      for (const m of d.mahlzeiten) w.m[m.art] = ausMahlzeit(m.fest ? m : Object.assign({}, m, { zeit: null }));
+      w.bewegung = d.bewegung.map(x => Object.assign({}, x, { id: neueId() })); w.sportZeitraum = d.sportZeitraum.slice();
+      w.schritt = 1; zeigeAssistent(); toast('Beispieltag eingetragen. Bei Typ 2 zeigt er alle Schritte.'); return;
+    }
+    if (a === 'plus') { w.bewegung.push({ id: neueId(), art: w.neu.art, dauer: w.neu.dauer, intensitaet: BEWEGUNG[w.neu.art] }); vib(8); zeigeAssistent(); return; }
+    if (a === 'weiter' && w.schritt === 0) { w.schritt = 1; zeigeAssistent(); return; }
+    if (a === 'weiter' && w.schritt === 1) {
+      if (!MAHLZEITEN.some(([art]) => w.m[art].items.length)) { toast('Füg mindestens ein Lebensmittel hinzu.'); return; }
+      w.schritt = 2; zeigeAssistent(); return;
+    }
+    if (a === 'berechnen') {
+      w.busy = true; zeigeAssistent();
+      await new Promise(r => setTimeout(r, 30));
+      z.profil = w.profil;
+      z.mahlzeiten = MAHLZEITEN.filter(([art]) => w.m[art].items.length).map(([art]) => {
+        const m = w.m[art], von = Math.min(m.von, m.bis), bis = Math.max(m.von, m.bis), zutaten = zutatenAus(m.items);
+        return { id: 'm-' + art, art, eingabe: Optimierer.zutatenText(zutaten), zutaten, summe: Lebensmittel.summe(zutaten), quelle: 'Liste', fest: m.modus === 'fest', zeit: m.zeit, von, bis };
+      });
+      z.bewegung = w.bewegung;
+      z.sportZeitraum = [Math.min(...w.sportZeitraum), Math.max(...w.sportZeitraum)];
+      z.tag = heute();
+      berechneSchritte();
+      schliesseAssistent();
+      zeigeSeite('plan');
+      neuBerechnet();
+      $('#seite-plan').scrollTo({ top: 0 });
+      toast(z.schritte.length > 1 ? 'Tippe auf „Weiter“, um zu sehen, was der Algorithmus verbessert.' : 'Fertig.');
+    }
+  });
 
   // ---------------- Navigation ----------------
-  const SEITEN = ['plan', 'vergleich', 'essen', 'einstellungen'];
-  const SEITEN_TITEL = { plan: 'Tagesplan', vergleich: 'Vergleich', essen: 'Mahlzeiten', einstellungen: 'Einstellungen' };
+  const SEITEN = ['plan', 'vergleich', 'einstellungen'];
+  const SEITEN_TITEL = { plan: 'Heute', vergleich: 'Vergleich', einstellungen: 'Einstellungen' };
   function zeigeSeite(s, ausHistory) {
     if (!SEITEN.includes(s)) s = 'plan';
     const alt = seite; seite = s;
@@ -767,15 +504,12 @@
       const i = SEITEN.indexOf(el.dataset.seite);
       el.style.transform = 'translateX(' + ((i - idx) * 100) + '%)';
       el.style.opacity = i === idx ? '1' : '0';
-      el.setAttribute('aria-hidden', i !== idx);
       el.inert = i !== idx;
     }
     for (const b of $$('#nav button')) b.classList.toggle('aktiv', b.dataset.ziel === s);
     document.body.dataset.seite = s;
     $('#appTitel').textContent = SEITEN_TITEL[s];
-    $('#fab').classList.toggle('weg', !(s === 'plan' || s === 'essen'));
     if (s === 'vergleich') renderVergleich();
-    if (s === 'essen') renderVorlagen();
     if (s === 'einstellungen') renderEinstellungen();
   }
   window.addEventListener('popstate', ev => {
@@ -785,151 +519,66 @@
 
   // ---------------- Einstellungen ----------------
   function renderEinstellungen() {
-    segmentWahl($('#eProfil'), zustand.profil);
-    $('#eGewicht').value = zustand.gewicht;
-    $('#eKey').value = zustand.apiKey;
-    $('#eModell').value = zustand.modell;
-    $('#eInsulinT2').checked = !!zustand.insulinBeiTyp2;
+    segmentWahl($('#eProfil'), z.profil);
+    $('#eInsulinAuto').checked = !!z.insulinAuto;
+    $('#eGewicht').value = z.gewicht;
     const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
     $('#eInstallieren').hidden = !installEvent || standalone;
-    $('#eInstallHinweis').textContent = standalone ? 'GlukoSim läuft als installierte App.' : installEvent ? 'Installiert startet GlukoSim wie eine normale App und funktioniert auch offline.' : 'Zum Installieren im Browser-Menü „Zum Startbildschirm hinzufügen“ bzw. „App installieren“ wählen.';
+    $('#eInstallHinweis').textContent = standalone ? 'GlukoSim läuft als installierte App.' : installEvent ? 'Installiert startet GlukoSim wie eine normale App und funktioniert offline.' : 'Zum Installieren im Browser-Menü „App installieren“ bzw. „Zum Startbildschirm hinzufügen“ wählen.';
     $('#eVersion').textContent = 'Version ' + VERSION;
   }
-
   function bindeEinstellungen() {
     $('#eProfil').onclick = ev => { const b = ev.target.closest('button'); if (b) setzeProfil(b.dataset.wert); };
-    $('#eGewicht').onchange = ev => { zustand.gewicht = Math.max(25, Math.min(200, parseFloat(ev.target.value) || 70)); ev.target.value = zustand.gewicht; geaendert(); };
-    $('#eKey').onchange = ev => { zustand.apiKey = ev.target.value.trim(); speichern(); $('#eTestErgebnis').textContent = ''; };
-    $('#eModell').onchange = ev => { zustand.modell = ev.target.value.trim() || STANDARD.modell; ev.target.value = zustand.modell; speichern(); };
-    $('#eKeyZeigen').onclick = () => { const i = $('#eKey'); i.type = i.type === 'password' ? 'text' : 'password'; };
-    $('#eInsulinT2').onchange = ev => { zustand.insulinBeiTyp2 = ev.target.checked; geaendert(); };
-    $('#eTesten').onclick = async () => {
-      zustand.apiKey = $('#eKey').value.trim(); zustand.modell = $('#eModell').value.trim() || STANDARD.modell; speichern();
-      const out = $('#eTestErgebnis'), b = $('#eTesten');
-      b.disabled = true; out.textContent = 'Verbinde …';
-      try { await KI.testen(zustand); out.textContent = 'Verbindung klappt. Modell: ' + zustand.modell; out.style.color = 'var(--ok)'; }
-      catch (e) { out.textContent = e.message; out.style.color = 'var(--rot)'; }
-      b.disabled = false;
-    };
-    $('#eInstallieren').onclick = installieren;
-    $('#eDemo').onclick = () => ladeDemo(true);
-    $('#eEinfuehrung').onclick = () => zeigeOnboarding(0);
-    $('#eCache').onclick = () => { KI.cacheLeeren(); toast('KI-Zwischenspeicher geleert'); };
-    $('#eLeeren').onclick = () => bestaetigen('Tag leeren?', 'Alle Einträge des Tages werden gelöscht. Gespeicherte Mahlzeiten bleiben erhalten.', 'Leeren', () => {
-      zustand.eintraege = []; geaendert(); toast('Tag geleert'); zeigeSeite('plan');
+    $('#eInsulinAuto').onchange = ev => { z.insulinAuto = ev.target.checked; if (z.mahlzeiten.length) berechneSchritte(); neuBerechnet(); };
+    $('#eGewicht').onchange = ev => { z.gewicht = Math.max(25, Math.min(200, parseFloat(ev.target.value) || 70)); ev.target.value = z.gewicht; if (z.mahlzeiten.length) berechneSchritte(); neuBerechnet(); };
+    $('#eInstallieren').onclick = async () => { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) { /* abgebrochen */ } installEvent = null; renderEinstellungen(); };
+    $('#eNeuerTag').onclick = () => oeffneAssistent(0, true);
+    $('#eDemo').onclick = () => { oeffneAssistent(0, true); asEl.querySelector('[data-as="demo"]').click(); };
+    $('#eReset').onclick = () => bestaetigen('Alles zurücksetzen?', 'Plan, Mahlzeiten und Einstellungen werden gelöscht.', 'Zurücksetzen', () => {
+      Object.assign(z, klon(STANDARD)); speichern(); renderPlan(); oeffneAssistent(0, true);
     });
   }
-
-  function ladeDemo(nachfragen) {
-    const aktion = () => {
-      zustand.eintraege = Demo.eintraege();
-      geaendert();
-      zustand.demoUnveraendert = true; speichern();
-      zeigeSeite('plan');
-      planChart.kreuz = null; planChart.zeigeZeit(9 * 60, false); renderKurve();
-      toast('Beispieltag geladen');
-    };
-    if (nachfragen && zustand.eintraege.length) bestaetigen('Beispieltag laden?', 'Dein aktueller Tag wird ersetzt.', 'Laden', aktion);
-    else aktion();
-  }
-
-  // ---------------- Installation ----------------
   window.addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); installEvent = ev; if (seite === 'einstellungen') renderEinstellungen(); });
-  window.addEventListener('appinstalled', () => { installEvent = null; toast('GlukoSim wurde installiert'); if (seite === 'einstellungen') renderEinstellungen(); });
-  async function installieren() {
-    if (!installEvent) return;
-    installEvent.prompt();
-    try { await installEvent.userChoice; } catch (e) { /* abgebrochen */ }
-    installEvent = null; renderEinstellungen();
-  }
-
-  // ---------------- Onboarding ----------------
-  const OB_KURVE = '<svg viewBox="0 0 320 150" preserveAspectRatio="none"><defs><linearGradient id="obg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D97757"/><stop offset=".42" stop-color="#D97757"/><stop offset=".5" stop-color="#F0EEE6"/><stop offset="1" stop-color="#F0EEE6"/></linearGradient></defs>' +
-    '<rect x="0" y="62" width="320" height="58" fill="rgba(240,238,230,0.06)"/>' +
-    '<path d="M0 104 C30 104 40 100 55 84 S80 48 95 60 115 98 140 100 165 96 180 70 200 22 215 36 240 96 265 100 300 98 320 100" fill="none" stroke="url(#obg)" stroke-width="10" stroke-linecap="round" opacity=".14"/>' +
-    '<path d="M0 104 C30 104 40 100 55 84 S80 48 95 60 115 98 140 100 165 96 180 70 200 22 215 36 240 96 265 100 300 98 320 100" fill="none" stroke="url(#obg)" stroke-width="3.5" stroke-linecap="round"/></svg>';
-  let obWahl = null;
-  function zeigeOnboarding(schritt) {
-    const ob = $('#onboarding'); ob.hidden = false;
-    obWahl = obWahl || zustand.profil;
-    const punkte = '<div class="ob-punkte">' + [0, 1, 2, 3].map(i => '<i class="' + (i === schritt ? 'an' : '') + '"></i>').join('') + '</div>';
-    let inhalt = '', fuss = '';
-    if (schritt === 0) {
-      inhalt = '<div class="ob-titel">GlukoSim</div><div class="ob-kurve">' + OB_KURVE + '</div>' +
-        '<p class="ob-text">Plane einen Tag mit Essen und Sport und sieh live, wie der Blutzucker darauf reagiert.</p>' +
-        '<p class="ob-hinweis">Biologie-Schulprojekt. Vereinfachte Simulation, keine medizinische Beratung.</p>';
-      fuss = '<button class="btn primaer" data-ob="weiter">Los geht’s</button>';
-    } else if (schritt === 1) {
-      inhalt = '<div class="ob-titel">Welcher Stoffwechsel?</div><p class="ob-text">Du kannst das jederzeit oben rechts ändern oder alle drei im Vergleich ansehen.</p>' +
-        PROFILE_LISTE.map(p => '<button class="profil-karte" data-p="' + p + '" role="radio" aria-checked="' + (p === obWahl) + '"><span class="farbpunkt" style="background:' + GlukoSim.PROFILE[p].farbe + '"></span><span><b>' + PROFIL_INFO[p][0] + '</b><span>' + PROFIL_INFO[p][1] + '</span></span></button>').join('');
-      fuss = '<button class="btn primaer" data-ob="weiter">Weiter</button>';
-    } else if (schritt === 2) {
-      inhalt = '<div class="ob-titel">So funktioniert’s</div><ul class="ob-liste">' +
-        '<li><span class="ico">' + ico('plus') + '</span><div><b>Eintragen</b><span>Mahlzeit mit Grammangabe beschreiben. Die Nährwerte ermittelt Gemini oder die eingebaute Liste.</span></div></li>' +
-        '<li><span class="ico">' + ico('pfeil') + '</span><div><b>Verschieben</b><span>Blöcke unter der Kurve ziehen. Die Kurve rechnet live mit.</span></div></li>' +
-        '<li><span class="ico">' + ico('funke') + '</span><div><b>Verstehen</b><span>„Kurve erklären“ beschreibt die Biologie dahinter, „Tag optimieren“ zeigt Tipps mit Vorschau.</span></div></li></ul>';
-      fuss = '<button class="btn primaer" data-ob="weiter">Weiter</button>';
-    } else {
-      inhalt = '<div class="ob-titel">Womit starten?</div><p class="ob-text">Der Beispieltag funktioniert auch ohne Internet und ohne API-Key, ideal zum Ausprobieren und Präsentieren.</p>' +
-        '<p class="ob-text">Für eigene Mahlzeiten, Fotos und KI-Erklärungen kannst du später in den Einstellungen einen Gemini-API-Key eintragen.</p>';
-      fuss = '<button class="btn tonal" data-ob="leer">Leer starten</button><button class="btn primaer" data-ob="demo">Beispieltag</button>';
-    }
-    ob.innerHTML = '<div class="ob-schritt">' + inhalt + '</div><div class="ob-fuss">' + punkte + fuss + '</div>';
-    for (const b of $$('.profil-karte', ob)) b.onclick = () => { obWahl = b.dataset.p; for (const k of $$('.profil-karte', ob)) k.setAttribute('aria-checked', k === b); vib(6); };
-    for (const b of $$('[data-ob]', ob)) b.onclick = () => {
-      const a = b.dataset.ob;
-      if (a === 'weiter') { zeigeOnboarding(schritt + 1); return; }
-      zustand.onboarding = true; ob.hidden = true;
-      if (obWahl) { zustand.profil = obWahl; }
-      speichern(); renderPlan(); renderEinstellungen();
-      if (a === 'demo') ladeDemo(false);
-    };
-  }
+  window.addEventListener('appinstalled', () => { installEvent = null; toast('GlukoSim wurde installiert'); });
 
   // ---------------- Start ----------------
   function start() {
     planChart = new Verlauf($('#planChart'), { hoehe: 240, spuren: 2 });
-    planChart.zoomIndex = zustand.zoom;
+    planChart.zoomIndex = z.zoom;
     planChart.onTap = () => renderReadout();
     planChart.onLayout = positioniereChips;
     vChart = new Verlauf($('#vChart'), { hoehe: 250, spuren: 0 });
-    vChart.zoomIndex = zustand.vZoom;
+    vChart.zoomIndex = z.vZoom;
     vChart.onTap = () => renderVergleich();
 
-    $('#zoomEin').onclick = () => { planChart.setZoom(planChart.zoomIndex + 1, planChart.kreuz); zustand.zoom = planChart.zoomIndex; speichern(); };
-    $('#zoomAus').onclick = () => { planChart.setZoom(planChart.zoomIndex - 1, planChart.kreuz); zustand.zoom = planChart.zoomIndex; speichern(); };
-    $('#vZoomEin').onclick = () => { vChart.setZoom(vChart.zoomIndex + 1, vChart.kreuz); zustand.vZoom = vChart.zoomIndex; speichern(); renderVergleich(); };
-    $('#vZoomAus').onclick = () => { vChart.setZoom(vChart.zoomIndex - 1, vChart.kreuz); zustand.vZoom = vChart.zoomIndex; speichern(); renderVergleich(); };
-    $('#tInsulin').onclick = () => { zustand.insulinZeigen = !zustand.insulinZeigen; speichern(); renderKurve(); $('#tInsulin').setAttribute('aria-pressed', zustand.insulinZeigen); };
-    $('#vInsulin').onclick = () => { zustand.vInsulinZeigen = !zustand.vInsulinZeigen; speichern(); renderVergleich(); };
-    $('#vLegende').onclick = ev => { const b = ev.target.closest('[data-p]'); if (!b) return; zustand.vAus = zustand.vAus || {}; zustand.vAus[b.dataset.p] = !zustand.vAus[b.dataset.p]; speichern(); renderVergleich(); };
+    $('#zoomEin').onclick = () => { planChart.setZoom(planChart.zoomIndex + 1, planChart.kreuz); z.zoom = planChart.zoomIndex; speichern(); };
+    $('#zoomAus').onclick = () => { planChart.setZoom(planChart.zoomIndex - 1, planChart.kreuz); z.zoom = planChart.zoomIndex; speichern(); };
+    $('#vZoomEin').onclick = () => { vChart.setZoom(vChart.zoomIndex + 1, vChart.kreuz); z.vZoom = vChart.zoomIndex; speichern(); renderVergleich(); };
+    $('#vZoomAus').onclick = () => { vChart.setZoom(vChart.zoomIndex - 1, vChart.kreuz); z.vZoom = vChart.zoomIndex; speichern(); renderVergleich(); };
+    $('#tInsulin').onclick = () => { z.insulinZeigen = !z.insulinZeigen; speichern(); renderKurve(); $('#tInsulin').setAttribute('aria-pressed', z.insulinZeigen); };
+    $('#vInsulin').onclick = () => { z.vInsulinZeigen = !z.vInsulinZeigen; speichern(); renderVergleich(); };
+    $('#vLegende').onclick = ev => { const b = ev.target.closest('[data-p]'); if (!b) return; z.vAus[b.dataset.p] = !z.vAus[b.dataset.p]; speichern(); renderVergleich(); };
     $('#btnErklaeren').onclick = erklaeren;
-    $('#btnOptimieren').onclick = optimieren;
     $('#btnVergleichErklaeren').onclick = vergleichErklaeren;
-    $('#btnAutoInsulin').onclick = () => { zustand.eintraege = zustand.eintraege.concat(Optimierer.autoInsulin(zustand.eintraege)); geaendert(); toast('Insulin nach Faustregel eingetragen'); };
+    $('#btnNeuerTag').onclick = () => oeffneAssistent(0, true);
+    $('#btnStartLeer').onclick = () => oeffneAssistent(0, true);
+    $('#btnAendern').onclick = () => oeffneAssistent(1, false);
     $('#profilChip').onclick = profilSheet;
-    $('#fab').onclick = () => seite === 'essen' ? mahlzeitSheet(null, null, 'vorlage') : oeffneNeu();
     $('#nav').onclick = ev => { const b = ev.target.closest('button'); if (b) zeigeSeite(b.dataset.ziel); };
-    $('#eintragListe').onclick = ev => {
-      if (ev.target.closest('[data-aktion="demo"]')) { ladeDemo(false); return; }
-      const li = ev.target.closest('.eintrag'); if (!li) return;
-      const e = zustand.eintraege.find(x => x.id === li.dataset.id); if (e) oeffneEintrag(e);
-    };
-    $('#vorlagenListe').onclick = ev => { const li = ev.target.closest('.eintrag'); if (!li) return; const v = zustand.vorlagen.find(x => x.id === li.dataset.id); if (v) vorlageSheet(v); };
-    for (const ul of [$('#eintragListe'), $('#vorlagenListe')]) ul.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList.contains('eintrag')) { ev.preventDefault(); ev.target.click(); } });
     bindeEinstellungen();
 
     history.replaceState({ seite: 'plan' }, '');
     zeigeSeite('plan', true);
     renderPlan();
-    requestAnimationFrame(() => planChart.zeigeZeit(zustand.eintraege.length ? Math.max(360, st.maxT) : 720, false));
-    if (!zustand.onboarding) zeigeOnboarding(0);
+    if (z.schritte.length) requestAnimationFrame(() => planChart.zeigeZeit(Math.max(360, st.maxT), false));
+    // Jeden neuen Tag: Einführung
+    if (z.tag !== heute() || !z.schritte.length) oeffneAssistent(0, true);
 
-    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-      navigator.serviceWorker.register('./sw.js').catch(() => { /* offline-Funktion nicht verfügbar */ });
-    }
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => { /* ohne Offline-Modus */ });
     document.fonts && document.fonts.ready.then(() => { planChart.zeichne(); vChart.zeichne(); });
   }
-
-  start();
+  // Erst die Lebensmittel-Tabelle laden, dann starten
+  Lebensmittel.laden().then(start).catch(e => {
+    document.body.innerHTML = '<p style="padding:24px;font-family:sans-serif;color:#E9EDF8">Die Lebensmittel-Tabelle konnte nicht geladen werden: ' + esc(e.message) + '</p>';
+  });
 })();

@@ -24,7 +24,7 @@
     ieFaktor: 96,           // Langzeitinsulin: IE -> Insulin im Blut
     ieFaktorSchnell: 40,    // schnelles Insulin: IE -> Insulin im Blut
     schnellPeak: 55,        // min bis Wirkmaximum schnelles Insulin
-    langSchwankung: 0.05,    // Langzeitinsulin: kleine Tagesschwankung
+    langSchwankung: 0,         // Langzeitinsulin: kleine Tagesschwankung
     sport: {                // Muskel-Glukoseaufnahme mg/dl/min (insulinunabhängig)
       leicht: 0.7, mittel: 1.5, intensiv: 2.4
     },
@@ -36,19 +36,19 @@
   // Stoffwechsel-Profile
   const PROFILE = {
     gesund: {
-      name: 'Gesund', farbe: '#F0EEE6', ziel: [70, 140],
+      name: 'Gesund', farbe: '#5BD6B0', ziel: [70, 140],
       eigenesInsulin: true, betaFaktor: 1.0, phase1: 3.0, sensorLag: 3, insulinMax: 200,
       si: 6.25e-4, leberSi: 1.0, leberFaktor: 1.0,
       glukagon: 0.12, sportKomp: 0.8, sportSekretion: 0.6
     },
     typ1: {
-      name: 'Typ 1', farbe: '#7BA7D4', ziel: [70, 180],
+      name: 'Typ 1', farbe: '#8FB4FF', ziel: [70, 180],
       eigenesInsulin: false, betaFaktor: 0, phase1: 0, sensorLag: 3,
       si: 6.25e-4, leberSi: 1.0, leberFaktor: 1.0,
       glukagon: 0.02, sportKomp: 0.35, sportSekretion: 1
     },
     typ2: {
-      name: 'Typ 2', farbe: '#D97757', ziel: [70, 180],
+      name: 'Typ 2', farbe: '#FFB547', ziel: [70, 180],
       eigenesInsulin: true, betaFaktor: 0.6, phase1: 0, sensorLag: 15, insulinMax: 55,
       si: 1.8e-4, leberSi: 0.35, leberFaktor: 1.2,
       glukagon: 0.08, sportKomp: 0.65, sportSekretion: 0.7
@@ -70,6 +70,15 @@
     return { last, theta };
   }
 
+  // Typ 1: automatische Standard-Therapie (Faustregel)
+  // 16 IE Langzeitinsulin um 22 Uhr + 1 IE schnelles Insulin pro 10 g Kohlenhydrate, 15 min vor dem Essen
+  function standardTherapie(eintraege) {
+    const r = [{ typ: 'insulin', art: 'lang', einheiten: 16, zeit: 1320, auto: true }];
+    for (const e of eintraege) if (e.typ === 'essen' && e.summe && e.summe.kh >= 8 && !e.ohneInsulin)
+      r.push({ typ: 'insulin', art: 'schnell', einheiten: Math.max(1, Math.round(e.summe.kh / 10)), zeit: Math.max(0, e.zeit - 15), auto: true, zu: e.id });
+    return r;
+  }
+
   function sportPhasen(eintraege) {
     return eintraege.filter(e => e.typ === 'sport').map(e => ({
       start: e.zeit, ende: e.zeit + (e.dauer || 30),
@@ -86,6 +95,7 @@
    */
   function simuliere(eintraege, profilKey, opt) {
     opt = opt || {};
+    if (opt.autoInsulin && profilKey === 'typ1') eintraege = eintraege.concat(standardTherapie(eintraege));
     const P = PROFILE[profilKey] || PROFILE.gesund;
     const gewicht = opt.gewicht || 70;
     const essen = eintraege.filter(e => e.typ === 'essen' && e.summe)
@@ -203,7 +213,7 @@
     return res;
   }
 
-  const api = { PARAM, PROFILE, simuliere, statistik, bewertung, spitzen, mahlzeitKinetik };
+  const api = { PARAM, PROFILE, simuliere, statistik, bewertung, spitzen, mahlzeitKinetik, standardTherapie };
   root.GlukoSim = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

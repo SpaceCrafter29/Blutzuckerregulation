@@ -7,21 +7,10 @@
   const neueId = () => 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const titel = e => e.typ === 'essen' ? (e.name || 'Mahlzeit') : e.typ === 'sport' ? (e.art || 'Sport') : (e.einheiten + ' IE ' + (e.art === 'lang' ? 'Langzeitinsulin' : 'schnelles Insulin'));
 
-  // ---------- Typ 1: Standard-Therapie vorschlagen ----------
-  function autoInsulin(eintraege) {
-    const neu = [];
-    if (!eintraege.some(e => e.typ === 'insulin' && e.art === 'lang'))
-      neu.push({ id: neueId(), typ: 'insulin', art: 'lang', einheiten: 16, zeit: 22 * 60, auto: true });
-    for (const e of eintraege.filter(x => x.typ === 'essen' && x.summe && x.summe.kh >= 8)) {
-      const hat = eintraege.some(i => i.typ === 'insulin' && i.art !== 'lang' && i.zeit >= e.zeit - 45 && i.zeit <= e.zeit + 20);
-      if (!hat) neu.push({ id: neueId(), typ: 'insulin', art: 'schnell', einheiten: Math.max(1, Math.round(e.summe.kh / 10)), zeit: Math.max(0, e.zeit - 15), auto: true });
-    }
-    return neu;
-  }
-
   // ---------- Realistische Essenszeiten ----------
   // Art der Mahlzeit aus dem Namen, sonst aus der Uhrzeit
   function mahlzeitArt(e) {
+    if (e.mahlzeit && FENSTER[e.mahlzeit]) return e.mahlzeit;
     const n = (e.name || '').toLowerCase();
     if (/frühstück|fruehstueck|morgen|breakfast/.test(n)) return 'fruehstueck';
     if (/mittag|lunch|mensa/.test(n)) return 'mittag';
@@ -50,135 +39,279 @@
     });
   }
 
+  // ---------- Tagesplaner: beste Uhrzeiten für flexible Einträge ----------
+  const istFest = e => e.typ === 'insulin' || e.fest !== false;
+  // Standard-Zeiträume für flexible Einträge (Beginn von–bis, in Minuten)
+  const STANDARD_ZEITRAUM = {
+    fruehstueck: [390, 570],   // 6:30–9:30
+    mittag: [690, 840],        // 11:30–14:00
+    abend: [1050, 1230],       // 17:30–20:30
+    snack: [540, 1260],        // 9:00–21:00
+    sport: [900, 1230]         // 15:00–20:30
+  };
+  const SPORT_ABSTAND = { leicht: 10, mittel: 30, intensiv: 60 };     // min nach Beginn einer Mahlzeit
+  function zeitraum(e) {
+    if (Array.isArray(e.zeitraum) && e.zeitraum.length === 2) return e.zeitraum;
+    return e.typ === 'sport' ? STANDARD_ZEITRAUM.sport : STANDARD_ZEITRAUM[mahlzeitArt(e)];
+  }
+
+  // Ist Uhrzeit t für Eintrag e im Plan erlaubt?
+  function erlaubt(plan, e, t) {
+    const essen = plan.filter(x => x.typ === 'essen' && x.id !== e.id);
+    const sport = plan.filter(x => x.typ === 'sport' && x.id !== e.id);
+    const [von, bis] = zeitraum(e);
+    if (t < von || t > bis) return false;
+    if (e.typ === 'essen') {
+      if (essen.some(x => Math.abs(x.zeit - t) < 60)) return false;                  // mind. 1 h zwischen Mahlzeiten
+      if (!reihenfolgeOk(essen.concat([e]), e, t)) return false;
+      const fr = essen.find(x => mahlzeitArt(x) === 'fruehstueck');
+      if (mahlzeitArt(e) === 'snack' && fr && t < fr.zeit) return false;             // kein Snack vor dem Frühstück
+      if (mahlzeitArt(e) === 'fruehstueck' && essen.some(x => mahlzeitArt(x) === 'snack' && x.zeit < t)) return false;
+      if (mahlzeitArt(e) === 'fruehstueck' && sport.some(s => s.zeit < t)) return false;
+      if (sport.some(s => t >= s.zeit && t < s.zeit + s.dauer)) return false;        // nicht während Sport essen
+      if (sport.some(s => s.zeit >= t && s.zeit < t + (SPORT_ABSTAND[s.intensitaet] || 30))) return false; // Sport nicht direkt danach
+      return true;
+    }
+    if (e.typ === 'sport') {
+      if (t + e.dauer > 1320) return false;                                          // spätestens 22:00 fertig
+      const fr = essen.find(x => mahlzeitArt(x) === 'fruehstueck');
+      if (fr && t < fr.zeit) return false;                                           // kein Sport vor dem Frühstück
+      const abst = SPORT_ABSTAND[e.intensitaet] || 30;
+      if (essen.some(x => x.zeit >= t && x.zeit < t + e.dauer)) return false;        // keine Mahlzeit während Sport
+      if (essen.some(x => t >= x.zeit && t < x.zeit + abst)) return false;           // nicht direkt nach dem Essen
+      if (sport.some(s => t < s.zeit + s.dauer + 30 && s.zeit < t + e.dauer + 30)) return false;
+      return true;
+    }
+    return true;
+  }
+
+  // Startzeit für einen neuen flexiblen Eintrag
+  function startZeit(plan, e) {
+    const [von, bis] = zeitraum(e);
+    const anker = e.zeit != null && e.zeit >= von && e.zeit <= bis ? e.zeit : Math.round((von + bis) / 2 / 15) * 15;
+    for (let d = 0; d <= 1440; d += 15) for (const t of [anker + d, anker - d])
+      if (t >= 0 && t <= 1435 && erlaubt(plan, e, t)) return t;
+    return anker;
+  }
+
+  function planeTag(eintraege, profil, opt) {
+    const plan = klon(eintraege);
+    const flex = plan.filter(e => (e.typ === 'essen' || e.typ === 'sport') && !istFest(e));
+    const vorher = bewerte(eintraege, profil, opt);
+    if (!flex.length) return { plan, vorher, nachher: vorher, aenderungen: [], keineFlexiblen: true };
+    // Mahlzeiten-Insulin (Typ 1) wandert mit der Mahlzeit
+    const bolusVon = {};
+    for (const m of flex.filter(e => e.typ === 'essen'))
+      bolusVon[m.id] = plan.filter(i => i.typ === 'insulin' && i.art !== 'lang' && i.zeit >= m.zeit - 45 && i.zeit <= m.zeit + 20 && !Object.values(bolusVon).flat().includes(i));
+    const setze = (e, t) => { const d = t - e.zeit; e.zeit = t; for (const b of bolusVon[e.id] || []) b.zeit = Math.max(0, Math.min(1439, b.zeit + d)); };
+    // Ungültige Startpositionen zuerst reparieren
+    for (const e of flex) if (!erlaubt(plan, e, e.zeit)) setze(e, startZeit(plan, e));
+    // Verschieben "kostet" etwas: ohne spürbaren Nutzen bleibt die Uhrzeit, wie sie ist
+    const anker = Object.fromEntries(flex.map(e => [e.id, e.zeit]));
+    const st0 = S.statistik(S.simuliere(plan, profil, opt), profil);
+    // Kosten = Bewertung der Kurve + kleine Strafe fürs Verschieben; Inf, wenn ein angezeigter Wert schlechter wird
+    const kosten = () => {
+      const sim = S.simuliere(plan, profil, opt), st = S.statistik(sim, profil);
+      if (st.max > st0.max || st.ueberMin > st0.ueberMin || st.unterMin > st0.unterMin) return Infinity;
+      return S.bewertung(sim, profil) + 0.5 * st.ueberMin + flex.reduce((a, e) => a + 2 * Math.abs(e.zeit - anker[e.id]) / 60, 0);
+    };
+    const repariert = klon(plan);
+    let best = kosten();
+    const runde = (schritt, radius) => {
+      for (const e of flex.slice().sort((a, b) => a.zeit - b.zeit)) {
+        const alt = e.zeit;
+        const von = radius ? alt - radius : 0, bis = radius ? alt + radius : 1440;
+        let bestT = alt;
+        for (let t = Math.ceil(von / schritt) * schritt; t <= bis; t += schritt) {
+          if (t === alt || t < 0 || t > 1435 || !erlaubt(plan, e, t)) continue;
+          setze(e, t);
+          const k = kosten();
+          if (k < best - 1e-6) { best = k; bestT = t; }
+          setze(e, alt);
+        }
+        setze(e, bestT);
+      }
+    };
+    runde(30, 0); runde(30, 0); runde(15, 60);
+    let nachher = bewerte(plan, profil, opt);
+    const d = { spitze: nachher.st.max - vorher.st.max, ueber: nachher.st.ueberMin - vorher.st.ueberMin, unter: nachher.st.unterMin - vorher.st.unterMin, ziel: nachher.st.zielProzent - vorher.st.zielProzent };
+    const spuerbar = d.spitze <= -5 || d.ueber <= -10 || d.unter < 0 || d.ziel >= 2;
+    let ergebnis = plan, keineVerbesserung = false;
+    if (!spuerbar) { ergebnis = repariert; nachher = bewerte(ergebnis, profil, opt); keineVerbesserung = true; }
+    const aenderungen = ergebnis.filter(e => flex.some(f => f.id === e.id))
+      .map(e => ({ id: e.id, titel: titel(e), von: eintraege.find(x => x.id === e.id).zeit, nach: e.zeit, grund: grund(ergebnis, e) }))
+      .filter(a => Math.abs(a.von - a.nach) >= 15);
+    return { plan: ergebnis, vorher, nachher, aenderungen, keineVerbesserung };
+  }
+
+  // Kurze Begründung für eine geplante Uhrzeit
+  function grund(plan, e) {
+    const essen = plan.filter(x => x.typ === 'essen' && x.id !== e.id);
+    if (e.typ === 'sport') {
+      const m = essen.filter(x => x.zeit <= e.zeit && e.zeit - x.zeit <= 120 && x.summe && x.summe.kh >= 15).sort((a, b) => b.zeit - a.zeit)[0];
+      return m ? 'Nach „' + titel(m) + '“: Die Muskeln verbrauchen die Glukose aus dieser Mahlzeit (GLUT4).'
+        : 'Hier stört der Sport keine Mahlzeit und senkt den Blutzucker gleichmäßig.';
+    }
+    const s = plan.find(x => x.typ === 'sport' && x.zeit >= e.zeit && x.zeit - e.zeit <= 120);
+    if (s) return 'Vor „' + titel(s) + '“: Beim Sport wird die Glukose aus der Mahlzeit direkt verbraucht.';
+    const nah = essen.slice().sort((a, b) => Math.abs(a.zeit - e.zeit) - Math.abs(b.zeit - e.zeit))[0];
+    if (nah && Math.abs(nah.zeit - e.zeit) >= 150) return 'Genug Abstand zu „' + titel(nah) + '“, damit sich die Anstiege nicht überlagern.';
+    return 'Passt in den Tagesablauf, ohne dass sich Anstiege stark überlagern.';
+  }
+
   // ---------- Vorschläge ----------
   function bewerte(plan, profil, opt) {
     const sim = S.simuliere(plan, profil, opt);
     return { sim, score: S.bewertung(sim, profil), st: S.statistik(sim, profil) };
   }
 
-  function vorschlaege(eintraege, profil, opt) {
-    const basis = bewerte(eintraege, profil, opt);
-    const essen = eintraege.filter(e => e.typ === 'essen' && e.summe);
-    const sport = eintraege.filter(e => e.typ === 'sport');
-    const kand = [];
-    const plus = (typ, ziel, titelText, text, plan) => kand.push({ typ, ziel, titel: titelText, text, plan });
-
-    // 1) Mahlzeiten verschieben – nur in realistischen Zeitfenstern
-    for (const e of essen) {
-      if (e.summe.kh < 10) continue;
-      const f = zeitfenster(e);
-      for (const d of [-90, -60, -30, 30, 60, 90]) {
-        const t = e.zeit + d;
-        if (Math.abs(d) > f.maxVerschiebung || t < f.von || t > f.bis) continue;
-        if (!reihenfolgeOk(essen, e, t)) continue;
-        const plan = klon(eintraege); plan.find(x => x.id === e.id).zeit = t;
-        const vorSport = sport.find(s => t <= s.zeit && s.zeit - t <= 90);
-        const nachbar = essen.find(x => x.id !== e.id && Math.abs(x.zeit - e.zeit) < 150);
-        const text = vorSport
-          ? 'Dann arbeiten die Muskeln beim ' + vorSport.art + ' genau, wenn die Glukose aus dieser Mahlzeit ins Blut kommt.'
-          : nachbar && Math.abs(nachbar.zeit - t) > Math.abs(nachbar.zeit - e.zeit)
-            ? 'Mit mehr Abstand zu „' + titel(nachbar) + '“ überlagern sich die beiden Blutzuckeranstiege nicht mehr.'
-            : 'Zu diesem Zeitpunkt addiert sich der Anstieg weniger mit anderen Einflüssen des Tages.';
-        plus('verschieben', e.id, '„' + titel(e) + '“ auf ' + hhmm(t) + ' verschieben', text, plan);
-      }
+  // Beste Uhrzeit für einen neuen Eintrag (alle anderen bleiben, wo sie sind)
+  function besteZeit(plan, e, profil, opt) {
+    const [von, bis] = zeitraum(e), mitte = (von + bis) / 2;
+    let best = null, bestK = Infinity;
+    for (let t = Math.ceil(von / 15) * 15; t <= bis; t += 15) {
+      if (!erlaubt(plan, e, t)) continue;
+      const neu = plan.concat([Object.assign({}, e, { zeit: t })]);
+      const sim = S.simuliere(neu, profil, opt), st = S.statistik(sim, profil);
+      const k = S.bewertung(sim, profil) + 0.5 * st.ueberMin + 0.5 * Math.abs(t - mitte) / 60;
+      if (k < bestK) { bestK = k; best = t; }
     }
-    // 2) Spaziergang nach dem Essen
-    for (const e of essen) {
-      if (e.summe.kh < 20) continue;
-      if (sport.some(s => s.zeit >= e.zeit && s.zeit - e.zeit <= 60)) continue;
-      if (e.zeit + 15 > 1290) continue; // nicht mitten in der Nacht spazieren
-      const plan = klon(eintraege);
-      plan.push({ id: neueId(), typ: 'sport', art: 'Spazieren', dauer: 20, intensitaet: 'leicht', zeit: Math.min(1400, e.zeit + 15) });
-      plus('spaziergang', e.id, 'Nach „' + titel(e) + '“ 20 Minuten spazieren',
-        'Arbeitende Muskeln holen sich Glukose über GLUT4-Transporter aus dem Blut, auch ohne Insulin. Das dämpft die Spitze.', plan);
-    }
-    // 3) Sport nach eine Mahlzeit legen
-    for (const s of sport) for (const e of essen) {
-      if (e.summe.kh < 20) continue;
-      const t = e.zeit + 30;
-      // Sport nur um max. 2 h verlegen und nicht vor 6 Uhr bzw. nach 21:30 beginnen
-      if (Math.abs(t - s.zeit) < 20 || Math.abs(t - s.zeit) > 120 || t < 360 || t + (s.dauer || 30) > 1290) continue;
-      const plan = klon(eintraege); plan.find(x => x.id === s.id).zeit = t;
-      plus('sport', s.id, '„' + titel(s) + '“ auf ' + hhmm(t) + ' legen (nach „' + titel(e) + '“)',
-        'Kurz nach dem Essen verbrauchen die Muskeln die frisch aufgenommene Glukose, statt dass sie den Blutzucker hochtreibt.', plan);
-    }
-    // 4) Typ 1: Insulin
-    if (profil === 'typ1') {
-      const schnell = eintraege.filter(e => e.typ === 'insulin' && e.art !== 'lang');
-      if (!eintraege.some(e => e.typ === 'insulin' && e.art === 'lang')) {
-        const plan = klon(eintraege); plan.push({ id: neueId(), typ: 'insulin', art: 'lang', einheiten: 16, zeit: 1320 });
-        plus('insulin', 'basal', 'Langzeitinsulin spritzen (16 IE um 22:00)',
-          'Langzeitinsulin ersetzt die ständige Grundausschüttung der Beta-Zellen und bremst die Zuckerabgabe der Leber.', plan);
-      }
-      for (const e of essen) {
-        if (e.summe.kh < 10) continue;
-        const bol = schnell.find(i => i.zeit >= e.zeit - 45 && i.zeit <= e.zeit + 20);
-        if (!bol) {
-          const ie = Math.max(1, Math.round(e.summe.kh / 10));
-          const plan = klon(eintraege); plan.push({ id: neueId(), typ: 'insulin', art: 'schnell', einheiten: ie, zeit: Math.max(0, e.zeit - 15) });
-          plus('insulin', e.id, ie + ' IE Insulin für „' + titel(e) + '“ spritzen',
-            'Ohne eigenes Insulin bleibt die Glukose im Blut. Das gespritzte Insulin übernimmt die Aufgabe der Beta-Zellen.', plan);
-        } else {
-          for (const d of [-1, 1, 2]) {
-            const ie = bol.einheiten + d;
-            if (ie < 1) continue;
-            const plan = klon(eintraege); plan.find(x => x.id === bol.id).einheiten = ie;
-            plus('dosis', bol.id, 'Insulin zu „' + titel(e) + '“ auf ' + ie + ' IE ' + (d < 0 ? 'senken' : 'erhöhen'),
-              d < 0 ? 'Etwas weniger Insulin verhindert, dass der Blutzucker danach zu tief fällt.' : 'Mehr Insulin bringt mehr Glukose aus dieser Mahlzeit in Muskel- und Fettzellen.', plan);
-          }
-          if (bol.zeit > e.zeit - 15) {
-            const plan = klon(eintraege); plan.find(x => x.id === bol.id).zeit = e.zeit - 20;
-            plus('dosis', bol.id + 'z', 'Insulin 20 Minuten vor „' + titel(e) + '“ spritzen',
-              'Gespritztes Insulin braucht Zeit bis es wirkt. Mit Vorlauf trifft es auf die ankommende Glukose.', plan);
-          }
-        }
-      }
-      for (const s of sport) {
-        const plan = klon(eintraege);
-        plan.push({ id: neueId(), typ: 'essen', name: 'Traubenzucker', zeit: Math.max(0, s.zeit - 10),
-          zutaten: [{ name: 'Traubenzucker', gramm: 16, kh: 14.6, zucker: 14.6, ballaststoffe: 0, fett: 0, protein: 0, kcal: 59, gi: 100 }],
-          summe: { kh: 14.6, zucker: 14.6, ballaststoffe: 0, fett: 0, protein: 0, kcal: 59, gi: 100, gl: 14.6, gramm: 16 } });
-        plus('snack', s.id, 'Vor „' + titel(s) + '“ 15 g Traubenzucker essen',
-          'Beim Sport nehmen die Muskeln viel Glukose auf. Bei Typ 1 lässt sich gespritztes Insulin nicht drosseln, deshalb droht Unterzucker.', plan);
-      }
-    }
-
-    // bewerten
-    const ergebnisse = [];
-    for (const k of kand) {
-      const r = bewerte(k.plan, profil, opt);
-      const effekt = {
-        score: basis.score - r.score,
-        spitze: r.st.max - basis.st.max,
-        ueber: r.st.ueberMin - basis.st.ueberMin,
-        unter: r.st.unterMin - basis.st.unterMin,
-        ziel: r.st.zielProzent - basis.st.zielProzent
-      };
-      ergebnisse.push(Object.assign(k, { effekt, sim: r.sim }));
-    }
-    const schwelle = Math.max(1, basis.score * 0.03);
-    const spuerbar = ef => ef.spitze <= -5 || ef.ueber <= -10 || ef.unter < 0 || ef.ziel >= 2;
-    const nichtsSchlechter = ef => ef.spitze <= 0 && ef.ueber <= 0 && ef.unter <= 0;
-    const gut = ergebnisse.filter(r => r.effekt.score > schwelle && nichtsSchlechter(r.effekt) && spuerbar(r.effekt));
-    gut.sort((a, b) => b.effekt.score - a.effekt.score);
-    const genutzt = new Set(), res = [];
-    for (const r of gut) {
-      const schluessel = r.ziel + '|' + (r.typ === 'verschieben' || r.typ === 'sport' ? 'zeit' : r.typ);
-      if (genutzt.has(r.ziel) || genutzt.has(schluessel)) continue;
-      genutzt.add(r.ziel); genutzt.add(schluessel);
-      res.push({ id: neueId(), quelle: 'modell', titel: r.titel, text: r.text, effekt: r.effekt, plan: r.plan, sim: r.sim });
-      if (res.length >= 3) break;
-    }
-    return { basis, vorschlaege: res };
+    return best != null ? best : startZeit(plan, e);
   }
 
-  function effektText(ef) {
-    const t = [];
-    if (ef.danach) t.push('Nach „' + ef.nachName + '“ ' + (ef.danach > 0 ? '+' : '−') + Math.abs(ef.danach) + ' mg/dl');
-    if (ef.spitze) t.push('Tagesspitze ' + (ef.spitze > 0 ? '+' : '−') + Math.abs(ef.spitze) + ' mg/dl');
-    if (ef.ueber) t.push((ef.ueber < 0 ? '−' : '+') + Math.abs(ef.ueber) + ' min zu hoch');
-    if (ef.unter) t.push((ef.unter < 0 ? '−' : '+') + Math.abs(ef.unter) + ' min Unterzucker');
-    return t;
+
+  // ================= Tagesplan in Schritten =================
+  const ARTNAME = { fruehstueck: 'Frühstück', mittag: 'Mittagessen', abend: 'Abendessen', snack: 'Snack' };
+  const r15 = t => Math.round(t / 15) * 15;
+  const diffSt = (a, b) => ({ spitze: b.max - a.max, ueber: b.ueberMin - a.ueberMin, unter: b.unterMin - a.unterMin, ziel: b.zielProzent - a.zielProzent });
+  const spuerbar = d => d.spitze <= -5 || d.ueber <= -10 || d.unter < 0 || d.ziel >= 2;
+  const schlechter = d => d.spitze > 0 || d.ueber > 0 || d.unter > 0;
+
+  // Eingaben des Assistenten -> Einträge mit Startzeiten (Mitte des Zeitraums, Sport um 17 Uhr)
+  function baueEintraege(mahlzeiten, bewegung, sportZeitraum) {
+    const [sv, sb] = sportZeitraum || [900, 1230];
+    const plan = [];
+    for (const m of mahlzeiten) plan.push({
+      id: m.id, typ: 'essen', mahlzeit: m.art, name: ARTNAME[m.art], eingabe: m.eingabe, quelle: m.quelle,
+      zutaten: klon(m.zutaten), summe: m.summe, fest: !!m.fest,
+      zeitraum: m.fest ? undefined : [m.von, m.bis], zeit: m.fest ? m.zeit : r15((m.von + m.bis) / 2)
+    });
+    for (const m of plan) if (!m.fest && !erlaubt(plan, m, m.zeit)) m.zeit = startZeit(plan, m);
+    for (const b of bewegung) {
+      const s = { id: b.id, typ: 'sport', art: b.art, dauer: b.dauer, intensitaet: b.intensitaet, fest: false, zeitraum: [sv, Math.max(sv, sb - b.dauer)], zeit: r15((sv + sb - b.dauer) / 2) };
+      if (!erlaubt(plan, s, s.zeit)) s.zeit = startZeit(plan, s);
+      plan.push(s);
+    }
+    return plan;
+  }
+
+  const GETRAENK = /cola|saft|milch|limo|eistee|wasser|kakao|smoothie|schorle|tee|kaffee|fanta|sprite/i;
+  const einheit = z => GETRAENK.test(z.name) ? 'ml' : 'g';
+  function zutatenText(zutaten) { return zutaten.map(z => z.name + ' ' + z.gramm + ' ' + einheit(z)).join(', '); }
+  // Auslagern lohnt nur bei süßen Beilagen (Saft, Cola, Obst, Süßes), nicht beim Hauptteil der Mahlzeit
+  const SNACK = /banane|apfel|orange|mandarine|clementine|erdbeer|beere|traube|obst|saft|cola|limo|fanta|sprite|eistee|smoothie|schoko|riegel|gummi|keks|kuchen|muffin|joghurt|jogurt|skyr|eis\b|eiscreme|kakao|nüsse|nuss/i;
+  function snackTauglich(z, m) {
+    return SNACK.test(z.name) && z.kh <= 0.6 * m.summe.kh;
+  }
+
+  // Schritt 3: Snack-Vorschlag
+  function snackVorschlag(plan, profil, opt) {
+    const basis = bewerte(plan, profil, opt);
+    let best = null;
+    const versuch = (neu, info, strafe) => {
+      const r = bewerte(neu, profil, opt), d = diffSt(basis.st, r.st);
+      if (!spuerbar(d) || schlechter(d)) return;
+      const gewinn = basis.score - r.score - (strafe || 0);
+      if (!best || gewinn > best.gewinn) best = { plan: neu, gewinn, info };
+    };
+    // a) Einen Teil einer Mahlzeit später als Snack essen (Mahlzeit aufteilen)
+    for (const m of plan.filter(e => e.typ === 'essen' && e.mahlzeit !== 'snack' && (e.zutaten || []).length >= 2)) {
+      m.zutaten.forEach((z, i) => {
+        if (z.kh < 10 || !snackTauglich(z, m)) return;
+        for (let t = m.zeit + 90; t <= Math.min(1260, m.zeit + 360); t += 30) {
+          const neu = klon(plan), mm = neu.find(x => x.id === m.id);
+          mm.zutaten.splice(i, 1); mm.summe = root.Lebensmittel.summe(mm.zutaten); mm.eingabe = zutatenText(mm.zutaten);
+          const snack = { id: neueId(), typ: 'essen', mahlzeit: 'snack', name: 'Snack', fest: true, zeit: t, zutaten: [klon(z)], summe: root.Lebensmittel.summe([z]), eingabe: zutatenText([z]), vorschlag: true };
+          if (!erlaubt(neu, snack, t)) continue;
+          neu.push(snack);
+          versuch(neu, { art: 'teilen', zutat: z, mahlzeit: m.name, t });
+        }
+      });
+    }
+    // b) Snack gegen Unterzucker (z. B. Typ 1 beim Sport) – ohne Insulin dazu
+    if (basis.st.unterMin > 0) {
+      let tU = 0; for (let t = 0; t < basis.sim.G.length; t++) if (basis.sim.G[t] < 70) { tU = t; break; }
+      for (const text of ['Banane 120 g', 'Apfel 150 g', 'Traubenzucker 16 g']) {
+        const zt = root.Lebensmittel.parse(text).zutaten;
+        for (let t = r15(tU - 90); t <= tU - 15; t += 15) {
+          if (t < 360 || t > 1320) continue;
+          if (plan.some(e => e.typ === 'essen' && Math.abs(e.zeit - t) < 45)) continue;
+          if (plan.some(e => e.typ === 'sport' && t >= e.zeit && t < e.zeit + e.dauer)) continue;
+          const neu = klon(plan);
+          neu.push({ id: neueId(), typ: 'essen', mahlzeit: 'snack', name: 'Snack', fest: true, zeit: t, zutaten: klon(zt), summe: root.Lebensmittel.summe(zt), eingabe: text, ohneInsulin: true, vorschlag: true });
+          versuch(neu, { art: 'unterzucker', text, t, tU });
+        }
+      }
+    }
+    if (!best) return null;
+    const i = best.info;
+    const sportDanach = best.plan.find(e => e.typ === 'sport' && e.zeit >= i.t && e.zeit - i.t <= 120);
+    const text = i.art === 'teilen'
+      ? '„' + i.zutat.name + '“ (' + i.zutat.gramm + ' ' + einheit(i.zutat) + ') nicht zum ' + i.mahlzeit + ' essen, sondern als Snack um ' + hhmm(i.t) + '. ' +
+        (sportDanach ? 'Kurz vor dem ' + sportDanach.art + ' verbrauchen die Muskeln die Glukose direkt.' : 'So kommt weniger Glukose auf einmal ins Blut, die Spitze nach dem ' + i.mahlzeit + ' wird kleiner.')
+      : 'Snack um ' + hhmm(i.t) + ': ' + i.text + ', ohne Insulin dazu. Ohne Snack fällt der Blutzucker um ' + hhmm(i.tU) + ' unter 70 mg/dl (Unterzucker).' +
+        (profil === 'typ1' ? ' Bei Typ 1 lässt sich gespritztes Insulin beim Sport nicht drosseln.' : '');
+    return { plan: best.plan, text, aenderungen: [{ titel: 'Snack', nach: i.t, text: i.art === 'teilen' ? zutatenText([i.zutat]) : i.text }] };
+  }
+
+  // Schritt 4: Eine Mahlzeit knapp außerhalb des Zeitraums
+  function ausserhalbVorschlag(plan, profil, opt) {
+    const basis = bewerte(plan, profil, opt);
+    let best = null;
+    for (const m of plan.filter(e => e.typ === 'essen' && !istFest(e) && e.zeitraum && !e.vorschlag)) {
+      const [von, bis] = m.zeitraum;
+      for (const d of [15, 30, 45, 60]) for (const t of [von - d, bis + d]) {
+        if (t < 300 || t > 1320) continue;
+        const neu = klon(plan), mm = neu.find(x => x.id === m.id);
+        mm.zeitraum = [von - 60, bis + 60];
+        if (!erlaubt(neu, mm, t)) continue;
+        mm.zeit = t; mm.zeitraum = [von, bis]; mm.ausnahme = true;
+        const r = bewerte(neu, profil, opt), dd = diffSt(basis.st, r.st);
+        if (!spuerbar(dd) || schlechter(dd)) continue;
+        const shift = Math.abs(t - m.zeit);
+        if (shift > 90) continue;                               // nur kleine Änderungen
+        const gewinn = basis.score - r.score - 2 * shift / 15;
+        if (!best || gewinn > best.gewinn) best = { plan: neu, gewinn, m, t, d, frueher: t < von, von, bis, dd };
+      }
+    }
+    if (!best) return null;
+    const dd = best.dd, nutzen = dd.unter < 0 ? 'Das verhindert ' + (-dd.unter) + ' min Unterzucker.'
+      : dd.spitze <= -5 ? 'Das senkt die höchste Spitze um ' + (-dd.spitze) + ' mg/dl.'
+      : 'Dadurch ist der Blutzucker ' + (-dd.ueber) + ' min weniger lang zu hoch.';
+    return {
+      plan: best.plan,
+      text: 'Wenn es geht: ' + best.m.name + ' um ' + hhmm(best.t) + ', also ' + best.d + ' min ' + (best.frueher ? 'früher' : 'später') + ' als dein Zeitraum (' + hhmm(best.von) + '–' + hhmm(best.bis) + '). ' + nutzen,
+      aenderungen: [{ titel: best.m.name, von: best.m.zeit, nach: best.t }]
+    };
+  }
+
+  // Alle Schritte berechnen
+  function planeSchritte(mahlzeiten, bewegung, profil, opt, sportZeitraum) {
+    const s0 = baueEintraege(mahlzeiten, bewegung, sportZeitraum);
+    const schritte = [{ key: 'start', titel: 'Dein Plan', text: 'Alles in der Mitte deiner Zeiträume, noch ohne Optimierung.', plan: s0, aenderungen: [] }];
+    const r = planeTag(s0, profil, opt);
+    schritte.push({
+      key: 'zeiten', titel: 'Beste Uhrzeiten',
+      text: r.aenderungen.length ? 'Der Algorithmus verschiebt alles innerhalb deiner Zeiträume so, dass die Kurve am ruhigsten bleibt.' : 'Deine Uhrzeiten passen schon. Verschieben innerhalb der Zeiträume bringt nichts Spürbares.',
+      plan: r.plan, aenderungen: r.aenderungen.map(a => ({ titel: a.titel, von: a.von, nach: a.nach, text: a.grund }))
+    });
+    const nicht = [];
+    const sn = snackVorschlag(r.plan, profil, opt);
+    if (sn) schritte.push(Object.assign({ key: 'snack', titel: 'Snack-Vorschlag' }, sn)); else nicht.push('Snack');
+    const au = ausserhalbVorschlag(schritte[schritte.length - 1].plan, profil, opt);
+    if (au) schritte.push(Object.assign({ key: 'ausserhalb', titel: 'Kleine Ausnahme' }, au)); else nicht.push('Ausnahme beim Zeitraum');
+    schritte.nichtNoetig = nicht;
+    return schritte;
   }
 
   // ---------- Texte ----------
@@ -233,51 +366,14 @@
     const g = ergebnisse.gesund.st, t1 = ergebnisse.typ1.st, t2 = ergebnisse.typ2.st;
     return [
       '**Gesund:** Die Kurve bleibt flach (Spitze ' + g.max + ' mg/dl), weil die **Beta-Zellen** schnell und genau so viel Insulin ausschütten wie nötig.',
-      '**Typ 1:** ' + (ergebnisse.typ1.autoInsulin ? 'Mit der Standard-Therapie aus gespritztem Insulin' : 'Mit dem eingetragenen Insulin') + ' erreicht die Kurve ' + t1.max + ' mg/dl. Gespritztes Insulin wirkt verzögert und reagiert nicht selbst auf den Blutzucker, deshalb schwankt die Kurve stärker' + (t1.unterMin ? ' und rutscht zeitweise in den Unterzucker.' : '.'),
+      ergebnisse.typ1.ohneInsulin
+        ? '**Typ 1 ohne Insulin:** Die Kurve bleibt den ganzen Tag hoch (Spitze ' + t1.max + ' mg/dl, Ø ' + t1.mittel + '). Ohne Insulin kommt die Glukose nicht in die Zellen, nur die **Niere** scheidet ab ca. 180 mg/dl Zucker aus.'
+        : '**Typ 1:** Mit gespritztem Insulin nach Faustregel erreicht die Kurve ' + t1.max + ' mg/dl. Gespritztes Insulin wirkt verzögert und reagiert nicht selbst auf den Blutzucker, deshalb schwankt die Kurve stärker' + (t1.unterMin ? ' und rutscht zeitweise in den Unterzucker.' : '.'),
       '**Typ 2:** Schon nüchtern erhöht, Spitze ' + t2.max + ' mg/dl und nur ' + t2.zielProzent + ' % der Zeit im Zielbereich. Die **Insulinresistenz** zwingt die Bauchspeicheldrüse zu mehr Insulin (bis ' + t2.insulinMax + ' statt ' + g.insulinMax + ' µU/ml), trotzdem wird die Glukose langsamer aus dem Blut geholt.',
       'Fazit: Derselbe Tag wirkt je nach Stoffwechsel völlig unterschiedlich, entscheidend ist, wie viel Insulin wann wirkt.'
     ].join('\n\n');
   }
 
-  function stuendlich(sim) { const a = []; for (let h = 0; h <= 24; h++) a.push(h + 'h:' + Math.round(sim.G[Math.min(1440, h * 60)])); return a.join(', '); }
-
-  function planText(eintraege, profil) {
-    return eintraege.slice().sort((a, b) => a.zeit - b.zeit).map(e => {
-      if (e.typ === 'essen') return '- ' + hhmm(e.zeit) + ' Mahlzeit „' + titel(e) + '“ (id ' + e.id + '): ' +
-        (e.zutaten || []).map(z => z.name + ' ' + z.gramm + ' g').join(', ') + '; gesamt ' + e.summe.kh + ' g KH, Zucker ' + e.summe.zucker + ' g, GI ' + e.summe.gi +
-        ', Fett ' + e.summe.fett + ' g, Eiweiß ' + e.summe.protein + ' g, Ballaststoffe ' + e.summe.ballaststoffe + ' g';
-      if (e.typ === 'sport') return '- ' + hhmm(e.zeit) + ' Sport: ' + e.art + ', ' + e.dauer + ' min, Intensität ' + e.intensitaet;
-      if (profil !== 'typ1') return null;
-      return '- ' + hhmm(e.zeit) + ' Insulin ' + (e.art === 'lang' ? 'lang wirkend' : 'schnell wirkend') + ': ' + e.einheiten + ' IE';
-    }).filter(Boolean).join('\n');
-  }
-
-  function zusammenfassung(eintraege, profil, sim, st) {
-    const sp = S.spitzen(sim, 15).map(p => hhmm(p.t) + ' ' + p.wert + ' mg/dl (+' + p.anstieg + ')').join('; ');
-    return [
-      'Profil: ' + PROFIL_TEXT[profil],
-      'Tagesablauf:', planText(eintraege, profil) || '- (keine Einträge)',
-      'Simulationsergebnis (vereinfachtes Modell):',
-      '- Wert um 0:00: ' + Math.round(sim.G[0]) + ' mg/dl; Zielbereich ' + st.ziel[0] + '–' + st.ziel[1] + ' mg/dl',
-      '- Höchster Wert ' + st.max + ' mg/dl um ' + hhmm(st.maxT) + '; tiefster ' + st.min + ' mg/dl um ' + hhmm(st.minT) + '; Durchschnitt ' + st.mittel,
-      '- Deutliche Anstiege: ' + (sp || 'keine'),
-      '- Zeit im Zielbereich ' + st.zielProzent + ' %, über dem Ziel ' + st.ueberMin + ' min, unter 70 mg/dl ' + st.unterMin + ' min',
-      '- Insulin im Blut: maximal ' + st.insulinMax + ' µU/ml um ' + hhmm(st.insulinMaxT) + ' (gesund nüchtern ca. 10)',
-      '- Blutzucker stündlich: ' + stuendlich(sim)
-    ].join('\n');
-  }
-
-  function vergleichZusammenfassung(eintraege, ergebnisse) {
-    const z = ['Derselbe Tagesablauf für drei Stoffwechsel-Profile:', planText(eintraege, 'gesund') || '- (keine Einträge)'];
-    for (const p of ['gesund', 'typ1', 'typ2']) {
-      const r = ergebnisse[p], st = r.st;
-      z.push('', PROFIL_TEXT[p] + (p === 'typ1' ? (r.autoInsulin ? ' (Simulation mit Standard-Insulintherapie: Langzeitinsulin + 1 IE pro 10 g KH)' : ' (mit dem eingetragenen Insulin)') : ''),
-        '- Höchster Wert ' + st.max + ' mg/dl um ' + hhmm(st.maxT) + ', tiefster ' + st.min + ', Durchschnitt ' + st.mittel + ', im Zielbereich ' + st.zielProzent + ' %, Unterzucker ' + st.unterMin + ' min, Insulin max ' + st.insulinMax + ' µU/ml',
-        '- stündlich: ' + stuendlich(r.sim));
-    }
-    return z.join('\n');
-  }
-
-  root.Optimierer = { vorschlaege, effektText, autoInsulin, neueId, klon, titel, hhmm };
-  root.Texte = { lokaleErklaerung, lokalerVergleich, zusammenfassung, vergleichZusammenfassung, planText, PROFIL_TEXT };
+  root.Optimierer = { zutatenText, neueId, klon, titel, hhmm, planeTag, planeSchritte, besteZeit, startZeit, erlaubt, istFest, mahlzeitArt, zeitraum, STANDARD_ZEITRAUM, ARTNAME };
+  root.Texte = { lokaleErklaerung, lokalerVergleich, PROFIL_TEXT };
 })(window);
