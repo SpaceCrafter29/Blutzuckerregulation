@@ -4,7 +4,7 @@
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const H = Optimierer.hhmm, klon = Optimierer.klon, neueId = Optimierer.neueId, titel = Optimierer.titel;
-  const VERSION = '3.3.0';
+  const VERSION = '3.4.0';
   const SPEICHER = 'glukosim-v3';
   const PROFILE_LISTE = ['gesund', 'typ1', 'typ2'];
   const PROFIL_INFO = {
@@ -302,11 +302,13 @@
     return { items: [], modus: 'zeitraum', von, bis, zeit: Math.round((von + bis) / 2 / 15) * 15 };
   }
   // Schritte des Assistenten. Dazwischen die Erklär-Folien (Mini-Präsentation): Kohlenhydrate, GI, Formel, Algorithmus
-  const AS_ALLE = ['profil', 'kh', 'gi', 'essen', 'formel', 'bewegung', 'algo'];
+  // Beim Beispieltag fallen die Eingabe-Seiten für Essen und Bewegung weg
+  const AS_ALLE = ['profil', 'start', 'kh', 'gi', 'essen', 'formel', 'bewegung', 'algo'];
   const AS_INFO = ['kh', 'gi', 'formel', 'algo'];
-  const asListe = () => AS_ALLE.filter(k => !AS_INFO.includes(k) || (z.erklaerungen !== false && !w.ohneInfo));
+  const asListe = () => AS_ALLE.filter(k => (!AS_INFO.includes(k) || (z.erklaerungen !== false && !w.ohneInfo)) &&
+    !(w.beispiel && (k === 'essen' || k === 'bewegung')));
   function oeffneAssistent(start, neuerTag) {
-    w = { schritt: typeof start === 'string' ? start : ['profil', 'essen', 'bewegung'][start || 0], neuerTag: !!neuerTag, ohneInfo: false, profil: z.profil, m: {}, bewegung: neuerTag ? [] : klon(z.bewegung),
+    w = { schritt: typeof start === 'string' ? start : ['profil', 'essen', 'bewegung'][start || 0], neuerTag: !!neuerTag, ohneInfo: false, beispiel: false, profil: z.profil, m: {}, bewegung: neuerTag ? [] : klon(z.bewegung),
       sportZeitraum: z.sportZeitraum.slice(), neu: { art: 'Spazieren', dauer: 30 }, busy: false, gezeigt: -1 };
     for (const [art] of MAHLZEITEN) {
       const alt = !neuerTag && z.mahlzeiten.find(m => m.art === art);
@@ -448,7 +450,7 @@
     const plusW = Math.round(simu.G[tMax] - simu.G[t0]), pName = PROFIL_INFO[w.profil][0];
     const zeile = (nr, formel, erg) => '<div class="f-zeile"><span class="f-nr">' + nr + '</span><div>' + formel + '<span class="f-erg">' + erg + '</span></div></div>';
     return infoKopf('formel') + '<div class="as-titel">So rechnet die App</div>' +
-      '<p class="as-text">Mit deinem ' + esc(k.name) + ': ' + esc(Optimierer.zutatenText(k.zt)) + '</p>' +
+      '<p class="as-text">' + (w.beispiel ? 'Mit dem ' + esc(k.name) + ' aus dem Beispieltag: ' : 'Mit deinem ' + esc(k.name) + ': ') + esc(Optimierer.zutatenText(k.zt)) + '</p>' +
       '<div class="info-eingaben"><span>Kohlenhydrate <b>' + Math.round(su.kh) + ' g</b></span><span>GI <b>' + gi + '</b></span><span>Fett <b>' + komma(su.fett) + ' g</b> · Ballaststoffe <b>' + komma(su.ballaststoffe) + ' g</b></span></div>' +
       '<div class="formel">' +
       zeile(1, '<b>Wirksamer Zucker</b> = Kohlenhydrate × (0,35 + 0,65 × GI ÷ 100)', Math.round(su.kh) + ' g × ' + faktor.toFixed(2).replace('.', ',') + ' = ' + Math.round(wirksam) + ' g') +
@@ -475,6 +477,34 @@
       '<p class="info-quelle">Zielbereich bei Diabetes 70 bis 180 mg/dl (Battelino u. a. 2019), gesund 70 bis 140 mg/dl. Muskeln nehmen beim Sport Zucker auch ohne Insulin auf (Richter u. a. 2004).</p>';
   }
 
+  // Womit starten? Beispieltag oder eigenes Essen (wie in der ersten Version)
+  function startSeite() {
+    const d = Demo.eingaben(), art = { fruehstueck: 'Frühstück', mittag: 'Mittag', abend: 'Abend' };
+    const inhaltDemo = d.mahlzeiten.map(m => '<li><b>' + art[m.art] + (m.fest ? ' (fest ' + H(m.zeit) + ')' : '') + ':</b> ' +
+      esc(m.zutaten.map(x => x.name.replace(' (gekocht)', '')).join(', ')) + '</li>').join('') +
+      '<li><b>Bewegung:</b> ' + esc(d.bewegung.map(b => b.art + ' ' + b.dauer + '\u00A0min').join(', ')) + '</li>';
+    const gewaehlt = w.startWahl;
+    return '<div class="as-titel">Womit starten?</div><p class="as-text">Nimm den fertigen Beispieltag oder trag dein eigenes Essen ein.</p>' +
+      '<button class="profil-karte start-karte" data-start="beispiel" role="radio" aria-checked="' + (gewaehlt === 'beispiel') + '"><span class="start-ico">' + ico('funke') + '</span><span><b>Beispieltag</b>' +
+      '<span>Ein fertiger Schultag. Ideal zum Zeigen, mit Typ 2 sieht man alle Schritte des Algorithmus.</span><ul class="start-liste">' + inhaltDemo + '</ul></span></button>' +
+      '<button class="profil-karte start-karte" data-start="eigen" role="radio" aria-checked="' + (gewaehlt === 'eigen') + '"><span class="start-ico">' + ico('essen') + '</span><span><b>Eigenes Essen</b>' +
+      '<span>Du suchst deine Mahlzeiten in der Lebensmittel-Tabelle und trägst deine Bewegung ein.</span></span></button>';
+  }
+  function waehleStart(wahl) {
+    if (wahl === 'beispiel') {
+      const d = Demo.eingaben();
+      for (const m of d.mahlzeiten) w.m[m.art] = ausMahlzeit(m.fest ? m : Object.assign({}, m, { zeit: null }));
+      w.bewegung = d.bewegung.map(x => Object.assign({}, x, { id: neueId() })); w.sportZeitraum = d.sportZeitraum.slice();
+      w.beispiel = true;
+    } else {
+      if (w.beispiel) { for (const [a] of MAHLZEITEN) w.m[a] = standardMahlzeit(a); w.bewegung = []; w.sportZeitraum = z.sportZeitraum.slice(); }
+      w.beispiel = false;
+    }
+    w.startWahl = wahl; vib(8);
+    const liste = asListe();
+    w.schritt = liste[liste.indexOf('start') + 1]; zeigeAssistent();
+  }
+
   function zeigeAssistent() {
     let liste = asListe();
     if (!liste.includes(w.schritt)) w.schritt = AS_ALLE.slice(AS_ALLE.indexOf(w.schritt)).find(k => liste.includes(k)) || liste[0];
@@ -483,8 +513,9 @@
     const zu = z.schritte.length ? '<button class="icon-btn" data-as="zu" aria-label="Schließen">' + ico('x') + '</button>' : '';
     let inhalt = '';
     if (s === 'profil') {
-      inhalt = '<div class="as-titel">' + (w.neuerTag ? 'Neuer Tag' : 'Stoffwechsel') + '</div><p class="as-text">Für wen planen wir heute?</p>' + profilKarten(w.profil) +
-        '<button class="text-btn as-demo" data-as="demo">Beispieltag laden</button>';
+      inhalt = '<div class="as-titel">' + (w.neuerTag ? 'Neuer Tag' : 'Stoffwechsel') + '</div><p class="as-text">Für wen planen wir heute?</p>' + profilKarten(w.profil);
+    } else if (s === 'start') {
+      inhalt = startSeite();
     } else if (s === 'kh') inhalt = infoKH();
     else if (s === 'gi') inhalt = infoGI();
     else if (s === 'formel') inhalt = infoFormel();
@@ -511,8 +542,8 @@
         (w.bewegung.length ? '<ul class="as-liste">' + w.bewegung.map(b => '<li><span class="ico">' + ico('sport') + '</span><span class="txt">' + esc(b.art) + ', ' + b.dauer + ' min</span><button data-weg="' + b.id + '" aria-label="Entfernen">' + ico('x') + '</button></li>').join('') + '</ul>' : '<p class="klein">Noch keine Bewegung. Du kannst das auch auslassen.</p>') +
         '<div class="as-zeit"><label>Zeit für Bewegung ab<input type="time" data-feld="sv" value="' + H(w.sportZeitraum[0]) + '"></label><label>bis<input type="time" data-feld="sb" value="' + H(w.sportZeitraum[1]) + '"></label></div>';
     }
-    const fuss = (idx > 0 ? '<button class="btn tonal" data-as="zurueck">Zurück</button>' : '') +
-      (letzter ? '<button class="btn primaer" data-as="berechnen">' + (w.busy ? '<span class="spinner"></span>Berechne …' : 'Tag berechnen') + '</button>'
+    const fuss = (idx > 0 ? '<button class="btn tonal" data-as="zurueck">Zurück</button>' : '') + (s === 'start' && !w.startWahl ? '' :
+      letzter ? '<button class="btn primaer" data-as="berechnen">' + (w.busy ? '<span class="spinner"></span>Berechne …' : 'Tag berechnen') + '</button>'
         : '<button class="btn primaer" data-as="weiter">Weiter</button>');
     // Gleicher Schritt neu gezeichnet: Scroll-Position behalten, nicht neu einblenden
     const alt = asEl.querySelector('.as-schritt'), gleich = w.gezeigt === s, top = gleich && alt ? alt.scrollTop : 0;
@@ -547,8 +578,8 @@
   });
   asEl.addEventListener('click', async ev => {
     if (!w || w.busy) return;
-    const karte = ev.target.closest('.profil-karte');
-    if (karte) { w.profil = karte.dataset.p; for (const k of $$('.profil-karte', asEl)) k.setAttribute('aria-checked', k === karte); vib(6); return; }
+    const karte = ev.target.closest('.profil-karte[data-p]');
+    if (karte) { w.profil = karte.dataset.p; for (const k of $$('.profil-karte[data-p]', asEl)) k.setAttribute('aria-checked', k === karte); vib(6); return; }
     const seg = ev.target.closest('.segment button');
     if (seg) {
       const feld = seg.parentElement.dataset.feld, k = seg.closest('[data-art]');
@@ -556,6 +587,8 @@
       if (feld === 'art') { w.neu.art = seg.dataset.wert; segmentWahl(seg.parentElement, seg.dataset.wert); }
       return;
     }
+    const sw = ev.target.closest('[data-start]');
+    if (sw) { waehleStart(sw.dataset.start); return; }
     const tr = ev.target.closest('[data-treffer]');
     if (tr) { hinzufuegen(tr.closest('[data-art]').dataset.art, tr.dataset.treffer); return; }
     const mg = ev.target.closest('[data-menge]');
@@ -575,12 +608,6 @@
     const liste = asListe(), idx = liste.indexOf(w.schritt);
     if (a === 'zurueck') { w.schritt = liste[Math.max(0, idx - 1)]; zeigeAssistent(); return; }
     if (a === 'ohneInfo') { w.ohneInfo = true; w.schritt = AS_ALLE.slice(AS_ALLE.indexOf(w.schritt) + 1).find(k => !AS_INFO.includes(k)) || 'bewegung'; zeigeAssistent(); return; }
-    if (a === 'demo') {
-      const d = Demo.eingaben();
-      for (const m of d.mahlzeiten) w.m[m.art] = ausMahlzeit(m.fest ? m : Object.assign({}, m, { zeit: null }));
-      w.bewegung = d.bewegung.map(x => Object.assign({}, x, { id: neueId() })); w.sportZeitraum = d.sportZeitraum.slice();
-      w.schritt = liste[idx + 1] || 'essen'; zeigeAssistent(); toast('Beispieltag eingetragen. Bei Typ 2 zeigt er alle Schritte.'); return;
-    }
     if (a === 'plus') { w.bewegung.push({ id: neueId(), art: w.neu.art, dauer: w.neu.dauer, intensitaet: BEWEGUNG[w.neu.art] }); vib(8); zeigeAssistent(); return; }
     if (a === 'weiter') {
       if (w.schritt === 'essen' && !MAHLZEITEN.some(([art]) => w.m[art].items.length)) { toast('Füg mindestens ein Lebensmittel hinzu.'); return; }
@@ -653,7 +680,7 @@
     $('#eGewicht').onchange = ev => { z.gewicht = Math.max(25, Math.min(200, parseFloat(ev.target.value) || 70)); ev.target.value = z.gewicht; if (z.mahlzeiten.length) berechneSchritte(); neuBerechnet(); };
     $('#eInstallieren').onclick = async () => { if (!installEvent) return; installEvent.prompt(); try { await installEvent.userChoice; } catch (e) { /* abgebrochen */ } installEvent = null; renderEinstellungen(); };
     $('#eNeuerTag').onclick = () => oeffneAssistent(0, true);
-    $('#eDemo').onclick = () => { oeffneAssistent(0, true); asEl.querySelector('[data-as="demo"]').click(); };
+    $('#eDemo').onclick = () => { oeffneAssistent('start', true); waehleStart('beispiel'); };
     $('#eReset').onclick = () => bestaetigen('Alles zurücksetzen?', 'Plan, Mahlzeiten und Einstellungen werden gelöscht.', 'Zurücksetzen', () => {
       Object.assign(z, klon(STANDARD)); speichern(); renderPlan(); oeffneAssistent(0, true);
     });

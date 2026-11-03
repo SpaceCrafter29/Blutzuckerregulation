@@ -7,6 +7,7 @@ für **Gesund**, **Diabetes Typ 1** und **Typ 2**.
 Jeden neuen Tag startet ein kurzer Assistent. Zwischen den Eingaben erklären vier kurze Folien, wie die App rechnet
 (überspringbar, in den Einstellungen abschaltbar):
 1. **Stoffwechsel** wählen: Gesund, Typ 1 oder Typ 2.
+   Danach: **Womit starten?** – fertiger **Beispieltag** (Essen und Bewegung schon eingetragen, die Eingabe-Seiten fallen weg) oder **eigenes Essen**.
 2. *Erklärung:* **Kohlenhydrate** – was sie sind, Werte pro 100 g aus der Tabelle.
 3. *Erklärung:* **Glykämischer Index** – was er ist, wie er gemessen wird, Werte aus den GI-Tabellen.
 4. **Mahlzeiten** (Frühstück, Mittag, Abend) aus der Lebensmittel-Tabelle suchen, Menge einstellen –
