@@ -56,3 +56,9 @@ Alle Parameter stehen oben in `sim.js`. Schulprojekt – keine medizinische Bera
 Unbekannte Lebensmittel werden nicht erkannt – die Liste der bekannten Lebensmittel steht in der App unter den Mahlzeiten.
 
 Nach Code-Änderungen in `sw.js` die Versionsnummer bei `CACHE` hochzählen.
+
+## Präsentation
+Im Ordner `praesentation/` (eigenes Design, ohne Vorlage, Übergänge und Animationen; Sprechnotizen in jeder Folie):
+- `GlukoSim-Mini-Praesentation.pptx` – 8 Folien: Einführung, Kohlenhydrate, glykämischer Index, Formel, Ergebnis, Tagesoptimierung, Quellen
+- `GlukoSim-Quellen-und-Umsetzung.pptx` – 2 Folien: woher die Daten kommen und wie die App rechnet, am Beispiel 250 g Nudeln
+- `GlukoSim-Datenquellen.pptx` – ausführliche Fassung mit allen Quellen und Modell-Tests
